@@ -64,14 +64,21 @@ describe("Domino Sky dataset & deterministic cascade engine", () => {
   });
 
   it("Stress Test #2: spoke closure at GAU only impacts aircraft tails routed through GAU", () => {
-    const gauRes = simulateNetwork([
-      { id: "c-gau", airportId: "GAU", startMin: parseHHMM("17:00"), endMin: parseHHMM("19:45") },
+    const gauShort = simulateNetwork([
+      { id: "c-gau-1", airportId: "GAU", startMin: parseHHMM("17:00"), endMin: parseHHMM("19:45") },
     ]);
-
-    const affectedTails = new Set(
-      gauRes.flights.filter((f) => f.status !== "ON_TIME").map((f) => f.tail_id)
+    const shortTails = new Set(
+      gauShort.flights.filter((f) => f.status !== "ON_TIME").map((f) => f.tail_id)
     );
-    expect(Array.from(affectedTails).sort()).toEqual(["VT-DS10", "VT-DS11"]);
+    expect(Array.from(shortTails).sort()).toEqual(["VT-DS10"]);
+
+    const gauExtended = simulateNetwork([
+      { id: "c-gau-2", airportId: "GAU", startMin: parseHHMM("17:00"), endMin: parseHHMM("20:45") },
+    ]);
+    const extTails = new Set(
+      gauExtended.flights.filter((f) => f.status !== "ON_TIME").map((f) => f.tail_id)
+    );
+    expect(Array.from(extTails).sort()).toEqual(["VT-DS10", "VT-DS11"]);
   });
 
   it("Goldfish Fix #1: turnaround-before-closure prevents delayed flights from operating during a downstream closure", () => {
