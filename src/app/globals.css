@@ -7,59 +7,54 @@
 }
 
 :root {
-  color-scheme: dark;
-  --occ-bg: #090d12;
-  --occ-land: #111821;
-  --occ-coast: #243244;
-  --occ-panel: #11161d;
-  --occ-elevated: #18202a;
-  --occ-hover: #1f2937;
-  --occ-border: #222c38;
-  --occ-text: #f1f5f9;
-  --occ-muted: #94a3b8;
-  --occ-amber: #f59e0b;
-  --occ-emerald: #10b981;
-  --occ-crimson: #ef4444;
+  color-scheme: light;
 }
 
 html,
 body {
-  background-color: var(--occ-bg);
-  color: var(--occ-text);
+  background-color: #f8fafc;
+  color: #0f172a;
   font-family: var(--font-sans);
   overflow-x: hidden;
 }
 
-/* Custom crisp aviation scrollbar */
+.light-grid-bg {
+  background-color: #f8fafc;
+  background-image:
+    linear-gradient(to right, rgba(203, 213, 225, 0.35) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(203, 213, 225, 0.35) 1px, transparent 1px);
+  background-size: 36px 36px;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0d1218;
+  background: #f1f5f9;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #273240;
+  background: #cbd5e1;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #384759;
+  background: #94a3b8;
 }
 
 @keyframes radar-ring-pulse {
   0% {
-    transform: scale(0.82);
-    opacity: 0.78;
+    transform: scale(0.84);
+    opacity: 0.72;
   }
   70% {
-    transform: scale(1.22);
+    transform: scale(1.24);
     opacity: 0.14;
   }
   100% {
-    transform: scale(1.3);
+    transform: scale(1.32);
     opacity: 0;
   }
 }
@@ -83,30 +78,28 @@ body {
 .gantt-breach-stripe {
   background-image: repeating-linear-gradient(
     -45deg,
-    rgba(239, 68, 68, 0.24),
-    rgba(239, 68, 68, 0.24) 6px,
-    rgba(127, 29, 29, 0.38) 6px,
-    rgba(127, 29, 29, 0.38) 12px
+    rgba(220, 38, 38, 0.14),
+    rgba(220, 38, 38, 0.14) 6px,
+    rgba(254, 226, 226, 0.9) 6px,
+    rgba(254, 226, 226, 0.9) 12px
   );
 }
 
 .gantt-delay-hatch {
   background-image: repeating-linear-gradient(
     -45deg,
-    rgba(245, 158, 11, 0.16),
-    rgba(245, 158, 11, 0.16) 4px,
+    rgba(217, 119, 6, 0.14),
+    rgba(217, 119, 6, 0.14) 4px,
     transparent 4px,
     transparent 8px
   );
 }
 
-/* AntiSlopUI MO10: Disable ambient motion under prefers-reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   .radar-storm-ring,
   .domino-arc-flow {
     animation: none !important;
   }
-
   * {
     scroll-behavior: auto !important;
   }

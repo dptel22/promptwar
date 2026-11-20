@@ -25,9 +25,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Domino Sky — Airline OCC Disruption Simulator",
+  title: "Domino Sky — Indian Flight Disruption & Recovery Simulator",
   description:
-    "Interactive 16-airport Indian airline operations control simulator with deterministic delay cascades, crew legality tracking, and zero-hallucination AI recovery dispatch.",
+    "Interactive 16-airport Indian aviation network simulator with deterministic tail chains, crew legality tracking, surrogate fragility scoring, and zero-hallucination AI dispatch.",
   icons: {
     icon: "/favicon.svg",
   },
@@ -41,9 +41,9 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${bricolage.variable} ${ibmPlexSans.variable} ${jetbrainsMono.variable} dark`}
+      className={`${bricolage.variable} ${ibmPlexSans.variable} ${jetbrainsMono.variable}`}
     >
-      <body className="min-h-screen bg-[#090D12] text-[#F1F5F9] antialiased selection:bg-amber-500/30 selection:text-[#F1F5F9]">
+      <body className="min-h-screen bg-[#F8FAFC] text-[#0F172A] antialiased selection:bg-[#2563EB]/15 selection:text-[#0F172A]">
         {children}
       </body>
     </html>
