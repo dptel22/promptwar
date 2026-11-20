@@ -142,4 +142,22 @@ describe("Deterministic recovery evaluator, crisis parser & AI hallucination ver
       endMin: parseHHMM("13:15"),
     });
   });
+
+  it("evaluates follow-on recovery candidates cleanly on top of activeActions", () => {
+    const closures = [
+      { id: "c-bom", airportId: "BOM", startMin: parseHHMM("07:30"), endMin: parseHHMM("09:00") },
+    ];
+    const first = evaluateRecoveryCandidates(closures, 5, []);
+    const applied = first.candidates[0];
+    const followOn = evaluateRecoveryCandidates(closures, 5, applied.actions);
+
+    expect(followOn.baseline.metrics.totalStrandedPax).toBe(
+      applied.result.metrics.totalStrandedPax
+    );
+    for (const c of followOn.candidates) {
+      expect(c.result.metrics.totalStrandedPax).toBeLessThanOrEqual(
+        followOn.baseline.metrics.totalStrandedPax
+      );
+    }
+  });
 });

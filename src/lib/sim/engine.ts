@@ -1,4 +1,4 @@
-import rawDataset from "@/data/domino-sky-dataset.json";
+import rawDataset from "../../data/domino-sky-dataset.json";
 import type {
   AirportClosure,
   CauseStep,

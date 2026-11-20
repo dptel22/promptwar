@@ -89,6 +89,10 @@ export function buildArcPath(from: Point, to: Point): string {
   return `M${from.x},${from.y} Q${ctrl.x.toFixed(1)},${ctrl.y.toFixed(1)} ${to.x},${to.y}`;
 }
 
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 export function interpolateFlightPosition(
   from: Point,
   to: Point,
@@ -98,13 +102,13 @@ export function interpolateFlightPosition(
   const ctrl = getArcControlPoint(from, to);
   const omt = 1 - t;
 
-  const x = omt * omt * from.x + 2 * omt * t * ctrl.x + t * t * to.x;
-  const y = omt * omt * from.y + 2 * omt * t * ctrl.y + t * t * to.y;
+  const x = round2(omt * omt * from.x + 2 * omt * t * ctrl.x + t * t * to.x);
+  const y = round2(omt * omt * from.y + 2 * omt * t * ctrl.y + t * t * to.y);
 
   // Derivative of quadratic Bezier for exact aircraft nose heading
   const tx = 2 * omt * (ctrl.x - from.x) + 2 * t * (to.x - ctrl.x);
   const ty = 2 * omt * (ctrl.y - from.y) + 2 * t * (to.y - ctrl.y);
-  const angleDeg = (Math.atan2(ty, tx) * 180) / Math.PI;
+  const angleDeg = round2((Math.atan2(ty, tx) * 180) / Math.PI);
 
   return { x, y, angleDeg };
 }
@@ -117,11 +121,11 @@ export function holdingOrbitPosition(
   const radiusX = 24 + (slotIndex % 2) * 8;
   const radiusY = 14 + (slotIndex % 2) * 5;
   // ~1 orbit every 12 simulated minutes
-  const theta = ((clockMin * 0.52 + slotIndex * 1.7) % (Math.PI * 2));
-  const x = center.x + Math.cos(theta) * radiusX;
-  const y = center.y + Math.sin(theta) * radiusY;
+  const theta = (clockMin * 0.52 + slotIndex * 1.7) % (Math.PI * 2);
+  const x = round2(center.x + Math.cos(theta) * radiusX);
+  const y = round2(center.y + Math.sin(theta) * radiusY);
   const tx = -Math.sin(theta) * radiusX;
   const ty = Math.cos(theta) * radiusY;
-  const angleDeg = (Math.atan2(ty, tx) * 180) / Math.PI;
+  const angleDeg = round2((Math.atan2(ty, tx) * 180) / Math.PI);
   return { x, y, angleDeg };
 }

@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { generateText, Output } from "ai";
 import { google } from "@ai-sdk/google";
 import { z } from "zod";
+import { predictCascadeRisk } from "@/lib/ml/predict";
 import { formatHHMM } from "@/lib/sim/engine";
 import {
   buildDeterministicBriefing,
   evaluateRecoveryCandidates,
 } from "@/lib/sim/recovery";
+import type { RecoveryAction } from "@/lib/sim/types";
 import { verifyAiBriefing } from "@/lib/sim/verify-ai";
 
 const ClosureSchema = z.object({
@@ -17,8 +19,33 @@ const ClosureSchema = z.object({
   label: z.string().optional(),
 });
 
+const RecoveryActionSchema = z.discriminatedUnion("type", [
+  z.object({
+    id: z.string(),
+    type: z.literal("SWAP_SPARE"),
+    spareTailId: z.string(),
+    targetFlightId: z.string(),
+    label: z.string(),
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal("CANCEL_FLIGHT"),
+    flightIds: z.array(z.string()),
+    label: z.string(),
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal("HOLD_CONNECTION"),
+    connectionId: z.string(),
+    flightId: z.string(),
+    holdMinutes: z.number().int().min(1).max(45),
+    label: z.string(),
+  }),
+]);
+
 const DispatchRequestSchema = z.object({
   closures: z.array(ClosureSchema).max(6),
+  activeActions: z.array(RecoveryActionSchema).max(6).optional(),
 });
 
 const AiBriefingSchema = z.object({
@@ -58,7 +85,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const evaluation = evaluateRecoveryCandidates(parsed.data.closures, 5);
+    const activeActions = (parsed.data.activeActions ?? []) as RecoveryAction[];
+    const evaluation = evaluateRecoveryCandidates(
+      parsed.data.closures,
+      5,
+      activeActions
+    );
+    const mlRisk = predictCascadeRisk(parsed.data.closures, evaluation.baseline);
     const deterministicBriefing = buildDeterministicBriefing(evaluation);
 
     if (
@@ -68,6 +101,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         evaluation,
         briefing: deterministicBriefing,
+        mlRisk,
         mode: "deterministic_engine",
       });
     }
@@ -77,11 +111,11 @@ export async function POST(req: Request) {
       return NextResponse.json({
         evaluation,
         briefing: deterministicBriefing,
+        mlRisk,
         mode: "deterministic_engine",
       });
     }
 
-    // Build compact verified payload so the LLM cannot invent unverified metrics
     const m = evaluation.baseline.metrics;
     const groundedPayload = {
       closures: evaluation.closures.map((c) => ({
@@ -156,6 +190,7 @@ ${JSON.stringify(groundedPayload)}`,
         return NextResponse.json({
           evaluation,
           briefing: output,
+          mlRisk,
           mode: "ai_verified",
         });
       }
@@ -163,6 +198,7 @@ ${JSON.stringify(groundedPayload)}`,
       return NextResponse.json({
         evaluation,
         briefing: deterministicBriefing,
+        mlRisk,
         mode: "deterministic_engine",
         verificationFallback: true,
         rejectedViolations: check.violations,
@@ -171,6 +207,7 @@ ${JSON.stringify(groundedPayload)}`,
       return NextResponse.json({
         evaluation,
         briefing: deterministicBriefing,
+        mlRisk,
         mode: "deterministic_engine",
       });
     }

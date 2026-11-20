@@ -1,0 +1,85 @@
+{
+  "version": "1.0.0",
+  "trainedOnSamples": 3000,
+  "trainSamples": 2400,
+  "testSamples": 600,
+  "positiveRate": 0.234,
+  "featureNames": [
+    "activeFlightsInWindow",
+    "tightTurnaroundCount",
+    "connectingPaxExposed",
+    "minCrewMarginMins",
+    "hourOfDay",
+    "stormDurationMins",
+    "bufferShatterLoad",
+    "closureFlightImpact",
+    "downstreamLegsExposed"
+  ],
+  "featureLabels": {
+    "activeFlightsInWindow": "Flights in storm window",
+    "tightTurnaroundCount": "Tight turnarounds (<=40m)",
+    "connectingPaxExposed": "Hub connection load",
+    "minCrewMarginMins": "Crew duty slack margin",
+    "hourOfDay": "Time-of-day peak",
+    "stormDurationMins": "Closure duration",
+    "bufferShatterLoad": "Turnaround cliff exposure",
+    "closureFlightImpact": "Duration × flights wave",
+    "downstreamLegsExposed": "Downstream tail legs"
+  },
+  "scaler": {
+    "means": [
+      1.105,
+      1.7133,
+      59.6463,
+      181.4542,
+      12.5545,
+      111.3017,
+      132.5533,
+      2.1335,
+      2.2454
+    ],
+    "stds": [
+      1.6015,
+      2.3571,
+      90.1166,
+      121.1115,
+      4.0587,
+      58.4771,
+      228.5759,
+      3.5983,
+      3.4974
+    ]
+  },
+  "ridge": {
+    "bias": 18.368,
+    "weights": [
+      15.7115,
+      4.9447,
+      -4.0993,
+      -4.7712,
+      1.1942,
+      2.7495,
+      17.4522,
+      -6.5415,
+      -6.8011
+    ],
+    "r2": 0.651,
+    "mae": 11.62
+  },
+  "logistic": {
+    "bias": -2.051,
+    "weights": [
+      0.4454,
+      0.5649,
+      0.4485,
+      -0.5093,
+      -0.1351,
+      -0.1788,
+      -0.1156,
+      0.2632,
+      0.7354
+    ],
+    "auc": 0.914,
+    "accuracy": 0.868
+  }
+}

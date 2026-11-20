@@ -28,6 +28,9 @@ export const metadata: Metadata = {
   title: "Domino Sky — Airline OCC Disruption Simulator",
   description:
     "Interactive 16-airport Indian airline operations control simulator with deterministic delay cascades, crew legality tracking, and zero-hallucination AI recovery dispatch.",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({

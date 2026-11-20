@@ -111,10 +111,12 @@ function candidateTitle(actions: RecoveryAction[]): string {
 
 export function evaluateRecoveryCandidates(
   closures: AirportClosure[],
-  limit = 5
+  limit = 5,
+  existingActions: RecoveryAction[] = []
 ): RecoveryEvaluation {
-  const baseline = simulateNetwork(closures, []);
+  const baseline = simulateNetwork(closures, existingActions);
   const m = baseline.metrics;
+  const existingIds = new Set(existingActions.map((a) => a.id));
 
   if (
     m.delayedFlights === 0 &&
@@ -221,7 +223,12 @@ export function evaluateRecoveryCandidates(
 
   const singleCandidates: RecoveryCandidate[] = [];
   for (const { category, action } of singleActions) {
-    const result = simulateNetwork(closures, [action]);
+    if (existingIds.has(action.id)) continue;
+    if (!existingActions.every((ex) => areActionsCompatible(ex, action))) {
+      continue;
+    }
+    const combined = [...existingActions, action];
+    const result = simulateNetwork(closures, combined);
     if (!isStrictlyBetter(result, baseline)) continue;
     if (
       action.type === "HOLD_CONNECTION" &&
@@ -252,7 +259,7 @@ export function evaluateRecoveryCandidates(
       if (!areActionsCompatible(a.actions[0], b.actions[0])) continue;
 
       const actions = [a.actions[0], b.actions[0]];
-      const result = simulateNetwork(closures, actions);
+      const result = simulateNetwork(closures, [...existingActions, ...actions]);
       if (isStrictlyBetter(result, a.result) && isStrictlyBetter(result, b.result)) {
         comboCandidates.push({
           id: `${a.id}__${b.id}`,
