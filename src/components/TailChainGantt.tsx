@@ -11,10 +11,7 @@ import {
   Users,
 } from "lucide-react";
 import { formatHHMM } from "@/lib/sim/engine";
-import type {
-  SimulatedFlight,
-  SimulationResult,
-} from "@/lib/sim/types";
+import type { SimulatedFlight, SimulationResult } from "@/lib/sim/types";
 import { CLOCK_MAX, CLOCK_MIN } from "./TimelineScrubber";
 
 interface TailChainGanttProps {
@@ -99,7 +96,9 @@ export function TailChainGantt({
   const sortedCrews = useMemo(() => {
     return [...simulation.crews].sort((a, b) => {
       if (a.breached !== b.breached) return a.breached ? -1 : 1;
-      return b.projectedEndMin - b.dutyLimitMin - (a.projectedEndMin - a.dutyLimitMin);
+      return (
+        b.projectedEndMin - b.dutyLimitMin - (a.projectedEndMin - a.dutyLimitMin)
+      );
     });
   }, [simulation.crews]);
 
@@ -112,12 +111,11 @@ export function TailChainGantt({
   return (
     <section
       aria-label="Tail chains, passenger connections, and crew duty timelines"
-      className={`flex w-full shrink-0 flex-col border-t border-[#222C38] bg-[#11161D] transition-[height] duration-200 ${
-        expanded ? "h-60" : "h-10"
+      className={`flex w-full shrink-0 flex-col border-t border-[#E2E8F0] bg-[#FFFFFF] transition-[height] duration-200 ${
+        expanded ? "h-56" : "h-10"
       }`}
     >
-      {/* Panel Header */}
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#222C38] px-3">
+      <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#E2E8F0] px-3">
         <div className="flex items-center gap-1.5" role="tablist">
           <TabButton
             active={activeTab === "tails"}
@@ -151,15 +149,14 @@ export function TailChainGantt({
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="hidden font-mono text-[10px] text-[#94A3B8] md:inline">
-            Red vertical marker = 600m crew duty limit · Green tick = turnaround
-            slack absorbed
+          <span className="hidden font-mono text-[10px] text-[#475569] md:inline">
+            Red line = 600m crew cutoff · ABS = turnaround buffer absorbed
           </span>
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
-            className="flex h-7 cursor-pointer items-center gap-1 rounded-md border border-[#222C38] bg-[#18202A] px-2 text-xs font-medium text-[#F1F5F9] transition-colors duration-150 hover:bg-[#1F2937] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+            className="flex h-7 cursor-pointer items-center gap-1 rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-2 text-xs font-medium text-[#0F172A] hover:bg-[#F1F5F9]"
           >
             <span>{expanded ? "Collapse" : "Expand Gantt"}</span>
             {expanded ? (
@@ -171,87 +168,80 @@ export function TailChainGantt({
         </div>
       </div>
 
-      {/* Scrollable Body */}
       {expanded && activeTab === "tails" && (
-        <div className="flex-1 overflow-y-auto overflow-x-hidden bg-[#090D12]">
-          {/* Sticky Time Axis */}
-          <div className="sticky top-0 z-10 flex h-6 border-b border-[#222C38] bg-[#11161D]">
-            <div className="w-28 shrink-0 border-r border-[#222C38] px-2 font-mono text-[10px] font-semibold leading-6 text-[#94A3B8]">
-              TAIL / CREW
+        <div className="flex-1 overflow-y-auto overflow-x-hidden bg-[#F8FAFC]">
+          <div className="sticky top-0 z-10 flex h-6 border-b border-[#E2E8F0] bg-[#FFFFFF]">
+            <div className="w-28 shrink-0 border-r border-[#E2E8F0] px-2 font-mono text-[10px] font-semibold leading-6 text-[#475569]">
+              Tail / Crew
             </div>
             <div
               onClick={handleHeaderScrub}
-              title="Click anywhere along timeline to scrub IST clock"
+              title="Click to scrub clock"
               className="relative flex-1 cursor-pointer"
             >
               {HOUR_TICKS.map((hr) => (
                 <div
                   key={hr}
-                  className="absolute top-0 bottom-0 border-l border-[#222C38] pl-1 font-mono text-[10px] leading-6 text-[#94A3B8]"
+                  className="absolute top-0 bottom-0 border-l border-[#E2E8F0] pl-1 font-mono text-[10px] leading-6 text-[#475569]"
                   style={{ left: `${pct(hr * 60)}%` }}
                 >
                   {String(hr).padStart(2, "0")}:00
                 </div>
               ))}
               <div
-                className="pointer-events-none absolute top-0 bottom-0 w-0.5 bg-[#F59E0B]"
+                className="pointer-events-none absolute top-0 bottom-0 w-0.5 bg-[#2563EB]"
                 style={{ left: `${pct(clockMin)}%` }}
               />
             </div>
           </div>
 
-          {/* 16 Tail Rows (28px fixed height each) */}
-          <div className="divide-y divide-[#18202A]">
+          <div className="divide-y divide-[#E2E8F0]">
             {tailRows.map(({ tailId, legs, crew, hasBreach, maxDelay }) => {
               const isSelectedTail = tailId === selectedTailId;
               return (
                 <div
                   key={tailId}
                   className={`flex h-7 items-center ${
-                    isSelectedTail ? "bg-[#18202A]" : "bg-[#090D12]"
+                    isSelectedTail ? "bg-[#EFF6FF]" : "bg-[#FFFFFF]"
                   }`}
                 >
-                  <div className="flex h-full w-28 shrink-0 items-center justify-between border-r border-[#222C38] px-2 font-mono text-[11px]">
+                  <div className="flex h-full w-28 shrink-0 items-center justify-between border-r border-[#E2E8F0] px-2 font-mono text-[11px]">
                     <span
                       className={`font-semibold ${
                         hasBreach
-                          ? "text-[#F87171]"
+                          ? "text-[#DC2626]"
                           : maxDelay > 0
-                            ? "text-[#FBBF24]"
-                            : "text-[#F1F5F9]"
+                            ? "text-[#B45309]"
+                            : "text-[#0F172A]"
                       }`}
                     >
                       {tailId}
                     </span>
-                    <span className="text-[9px] text-[#94A3B8]">
+                    <span className="text-[9px] text-[#475569]">
                       {crew.crewId}
                     </span>
                   </div>
 
                   <div className="relative h-full flex-1">
-                    {/* Hour guide lines */}
                     {HOUR_TICKS.map((hr) => (
                       <div
                         key={`g-${hr}`}
-                        className="pointer-events-none absolute top-0 bottom-0 border-l border-[#141B24]"
+                        className="pointer-events-none absolute top-0 bottom-0 border-l border-[#F1F5F9]"
                         style={{ left: `${pct(hr * 60)}%` }}
                       />
                     ))}
 
-                    {/* Crew Duty Limit Wall */}
                     <div
                       title={`${crew.crewId} legal duty limit: ${formatHHMM(crew.dutyLimitMin)} IST`}
-                      className="pointer-events-none absolute top-0 bottom-0 z-10 w-[1.5px] bg-[#EF4444]/75"
+                      className="pointer-events-none absolute top-0 bottom-0 z-10 w-[1.5px] bg-[#DC2626]/70"
                       style={{ left: `${pct(crew.dutyLimitMin)}%` }}
                     />
 
-                    {/* Synchronized Playhead */}
                     <div
-                      className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-[#F59E0B]/70"
+                      className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-[#2563EB]/75"
                       style={{ left: `${pct(clockMin)}%` }}
                     />
 
-                    {/* Flight Bars */}
                     {legs.map((leg) => {
                       const schedLeft = pct(leg.scheduledDepMin);
                       const schedWidth = Math.max(
@@ -266,24 +256,23 @@ export function TailChainGantt({
                       const isSel = leg.flight_id === selectedFlightId;
 
                       let barClass =
-                        "border-emerald-500/60 bg-emerald-950/70 text-[#34D399]";
+                        "border-[#2563EB]/40 bg-[#EFF6FF] text-[#1D4ED8]";
                       if (leg.status === "DELAYED") {
                         barClass =
-                          "gantt-delay-hatch border-amber-500/70 bg-amber-950/60 text-[#FBBF24]";
+                          "gantt-delay-hatch border-[#D97706] bg-[#FEF3C7] text-[#B45309]";
                       } else if (leg.status === "CREW_BREACH") {
                         barClass =
-                          "gantt-breach-stripe border-red-500 text-[#F87171]";
+                          "gantt-breach-stripe border-[#DC2626] text-[#DC2626]";
                       } else if (leg.status === "CANCELLED") {
                         barClass =
-                          "border-dashed border-slate-600 bg-[#11161D] text-[#94A3B8]";
+                          "border-dashed border-[#94A3B8] bg-[#F1F5F9] text-[#475569]";
                       }
 
                       return (
                         <div key={leg.flight_id}>
-                          {/* Original scheduled ghost outline when shifted */}
                           {leg.delayMin > 0 && leg.status !== "CANCELLED" && (
                             <div
-                              className="pointer-events-none absolute top-1 bottom-1 rounded-sm border border-dashed border-[#475569]/50"
+                              className="pointer-events-none absolute top-1 bottom-1 rounded-sm border border-dashed border-[#94A3B8]"
                               style={{
                                 left: `${schedLeft}%`,
                                 width: `${schedWidth}%`,
@@ -294,9 +283,9 @@ export function TailChainGantt({
                           <button
                             type="button"
                             onClick={() => onSelectFlight(leg.flight_id)}
-                            title={`${leg.flight_id} (${leg.origin}->${leg.destination}) ${formatHHMM(leg.actualDepMin)}–${formatHHMM(leg.actualArrMin)}${leg.delayMin > 0 ? ` +${leg.delayMin}m` : ""}${leg.bufferAbsorbedMin > 0 ? ` [Absorbed ${leg.bufferAbsorbedMin}m]` : ""}`}
-                            className={`absolute top-[3px] bottom-[3px] flex cursor-pointer items-center justify-between overflow-hidden rounded-sm border px-1 font-mono text-[9.5px] font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${barClass} ${
-                              isSel ? "ring-1 ring-[#F1F5F9]" : ""
+                            title={`${leg.flight_id} (${leg.origin}->${leg.destination}) ${formatHHMM(leg.actualDepMin)}–${formatHHMM(leg.actualArrMin)}`}
+                            className={`absolute top-[3px] bottom-[3px] flex cursor-pointer items-center justify-between overflow-hidden rounded-sm border px-1 font-mono text-[9.5px] font-semibold transition-colors duration-150 ${barClass} ${
+                              isSel ? "ring-2 ring-[#2563EB]" : ""
                             }`}
                             style={{
                               left: `${actLeft}%`,
@@ -312,7 +301,7 @@ export function TailChainGantt({
                                 aria-hidden="true"
                               />
                             ) : leg.bufferAbsorbedMin > 0 && leg.delayMin === 0 ? (
-                              <span className="ml-0.5 shrink-0 text-[8.5px] text-[#34D399]">
+                              <span className="ml-0.5 shrink-0 text-[8.5px] text-[#059669]">
                                 ABS
                               </span>
                             ) : leg.delayMin > 0 ? (
@@ -333,53 +322,53 @@ export function TailChainGantt({
       )}
 
       {expanded && activeTab === "connections" && (
-        <div className="flex-1 overflow-y-auto bg-[#090D12]">
+        <div className="flex-1 overflow-y-auto bg-[#FFFFFF]">
           <table className="w-full border-collapse text-left text-xs">
-            <thead className="sticky top-0 bg-[#11161D] font-mono text-[10px] uppercase text-[#94A3B8]">
-              <tr className="border-b border-[#222C38]">
+            <thead className="sticky top-0 bg-[#F8FAFC] font-mono text-[10px] text-[#475569]">
+              <tr className="border-b border-[#E2E8F0]">
                 <th className="px-3 py-1.5">ID</th>
                 <th className="px-3 py-1.5">Hub</th>
                 <th className="px-3 py-1.5">Transfer</th>
                 <th className="px-3 py-1.5">Pax</th>
                 <th className="px-3 py-1.5">Min MCT</th>
-                <th className="px-3 py-1.5">Actual Window</th>
+                <th className="px-3 py-1.5">Actual</th>
                 <th className="px-3 py-1.5">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#18202A]">
+            <tbody className="divide-y divide-[#F1F5F9]">
               {sortedConnections.map((cx) => (
                 <tr
                   key={cx.connection_id}
                   onClick={() => onSelectFlight(cx.from_flight)}
-                  className="cursor-pointer hover:bg-[#18202A]"
+                  className="cursor-pointer hover:bg-[#F8FAFC]"
                 >
-                  <td className="px-3 py-1.5 font-mono font-semibold text-[#F1F5F9]">
+                  <td className="px-3 py-1.5 font-mono font-semibold text-[#0F172A]">
                     {cx.connection_id}
                   </td>
-                  <td className="px-3 py-1.5 font-mono text-[#94A3B8]">
+                  <td className="px-3 py-1.5 font-mono text-[#475569]">
                     {cx.airport}
                   </td>
-                  <td className="px-3 py-1.5 font-mono text-[#F1F5F9]">
+                  <td className="px-3 py-1.5 font-mono text-[#0F172A]">
                     {cx.from_flight} → {cx.to_flight}
                   </td>
-                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#F1F5F9]">
+                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#0F172A]">
                     {cx.passengers}
                   </td>
-                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#94A3B8]">
+                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#475569]">
                     {cx.min_connect_minutes}m
                   </td>
-                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#F1F5F9]">
+                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#0F172A]">
                     {cx.actualConnectMin !== null
                       ? `${cx.actualConnectMin}m`
                       : "Grounded"}
                   </td>
                   <td className="px-3 py-1.5 font-mono text-[11px] font-semibold">
                     {cx.status === "INTACT" ? (
-                      <span className="text-[#34D399]">INTACT</span>
+                      <span className="text-[#059669]">INTACT</span>
                     ) : cx.status === "BROKEN_GROUNDED" ? (
-                      <span className="text-[#F87171]">GROUNDED</span>
+                      <span className="text-[#DC2626]">GROUNDED</span>
                     ) : (
-                      <span className="text-[#F87171]">
+                      <span className="text-[#DC2626]">
                         MISSED (-{cx.shortfallMin}m)
                       </span>
                     )}
@@ -392,54 +381,54 @@ export function TailChainGantt({
       )}
 
       {expanded && activeTab === "crews" && (
-        <div className="flex-1 overflow-y-auto bg-[#090D12]">
+        <div className="flex-1 overflow-y-auto bg-[#FFFFFF]">
           <table className="w-full border-collapse text-left text-xs">
-            <thead className="sticky top-0 bg-[#11161D] font-mono text-[10px] uppercase text-[#94A3B8]">
-              <tr className="border-b border-[#222C38]">
+            <thead className="sticky top-0 bg-[#F8FAFC] font-mono text-[10px] text-[#475569]">
+              <tr className="border-b border-[#E2E8F0]">
                 <th className="px-3 py-1.5">Crew</th>
                 <th className="px-3 py-1.5">Tail</th>
                 <th className="px-3 py-1.5">Base</th>
-                <th className="px-3 py-1.5">Duty Start</th>
-                <th className="px-3 py-1.5">Legal Cutoff (600m)</th>
+                <th className="px-3 py-1.5">Start</th>
+                <th className="px-3 py-1.5">Cutoff (600m)</th>
                 <th className="px-3 py-1.5">Projected End</th>
                 <th className="px-3 py-1.5">Legality</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#18202A]">
+            <tbody className="divide-y divide-[#F1F5F9]">
               {sortedCrews.map((cr) => (
                 <tr
                   key={cr.crewId}
                   onClick={() => {
                     if (cr.breachFlightId) onSelectFlight(cr.breachFlightId);
                   }}
-                  className="cursor-pointer hover:bg-[#18202A]"
+                  className="cursor-pointer hover:bg-[#F8FAFC]"
                 >
-                  <td className="px-3 py-1.5 font-mono font-semibold text-[#F1F5F9]">
+                  <td className="px-3 py-1.5 font-mono font-semibold text-[#0F172A]">
                     {cr.crewId}
                   </td>
-                  <td className="px-3 py-1.5 font-mono text-[#94A3B8]">
+                  <td className="px-3 py-1.5 font-mono text-[#475569]">
                     {cr.tailId}
                   </td>
-                  <td className="px-3 py-1.5 font-mono text-[#94A3B8]">
+                  <td className="px-3 py-1.5 font-mono text-[#475569]">
                     {cr.base}
                   </td>
-                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#F1F5F9]">
+                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#0F172A]">
                     {formatHHMM(cr.dutyStartMin)}
                   </td>
-                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#F1F5F9]">
+                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#0F172A]">
                     {formatHHMM(cr.dutyLimitMin)}
                   </td>
-                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#F1F5F9]">
+                  <td className="px-3 py-1.5 font-mono tabular-nums text-[#0F172A]">
                     {formatHHMM(cr.projectedEndMin)}
                   </td>
                   <td className="px-3 py-1.5 font-mono text-[11px] font-semibold">
                     {cr.breached ? (
-                      <span className="inline-flex items-center gap-1 text-[#F87171]">
+                      <span className="inline-flex items-center gap-1 text-[#DC2626]">
                         <AlertTriangle className="h-3 w-3" aria-hidden="true" />
                         BREACH +{cr.overtimeMin}m ({cr.breachFlightId})
                       </span>
                     ) : (
-                      <span className="text-[#34D399]">LEGAL</span>
+                      <span className="text-[#059669]">LEGAL</span>
                     )}
                   </td>
                 </tr>
@@ -471,12 +460,12 @@ function TabButton({
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={`flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+      className={`flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors duration-150 ${
         active
-          ? "border-amber-500/60 bg-[#18202A] text-[#F1F5F9]"
+          ? "border-[#2563EB] bg-[#EFF6FF] text-[#2563EB]"
           : alert
-            ? "border-[#222C38] bg-[#11161D] text-[#F87171] hover:bg-[#18202A]"
-            : "border-transparent bg-transparent text-[#94A3B8] hover:bg-[#18202A] hover:text-[#F1F5F9]"
+            ? "border-[#FECACA] bg-[#FEF2F2] text-[#DC2626]"
+            : "border-transparent text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A]"
       }`}
     >
       {icon}

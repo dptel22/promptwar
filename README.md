@@ -1,41 +1,42 @@
-# Domino Sky — Airline OCC Disruption Cascade & Recovery Simulator
+# Domino Sky — Flight Disruption Cascade & Recovery Simulator
 
-Interactive airline Operations Control Center (OCC) simulator across 16 Indian airports, 70 flights, 16 aircraft tail chains, 21 passenger connections, 16 crew duty clocks, and 2 spare aircraft.
+## Chosen Vertical
+**Domino Sky: Airline Operations Control Center (OCC) Disruption & Recovery Simulator** across a 16-airport Indian flight network (`70` scheduled flights, `16` aircraft tail chains, `21` passenger connections, `16` crew duty rosters, and `2` spare aircraft at `BLR` and `DEL`).
 
-## Core Architecture
+## Approach & Logic
+All delay, crew legality, and stranded-passenger numbers are calculated **100% deterministically** by pure TypeScript simulation code—never guessed by an LLM:
 
-1. **Deterministic Fixed-Point Cascade Engine (`src/lib/sim/engine.ts`):**
-   - Evaluates turnaround propagation (`min_turnaround_minutes = 30`) and explicit turnaround buffer absorption *before* airport closure checks so delayed flights can never illegally depart from or arrive into a closed hub.
-   - Tracks ATC airborne holding orbits (`holdingStartMin`–`holdingEndMin`), ground delay holds, `600m` crew legal duty cutoffs (`CREW_BREACH`), and inclusion-exclusion deduplicated stranded passengers.
-2. **Deterministic Recovery & Zero-Hallucination Verifier (`src/lib/sim/recovery.ts`, `src/lib/sim/verify-ai.ts`):**
-   - Enumerates physically valid countermeasures: spare aircraft swaps (`VT-DS17` at `BLR`, `VT-DS18` at `DEL`) with reserve crew duty validation, matched out-and-back or final-leg cancellations (zero aircraft teleportation), `<= 45m` hub connection holds, and non-conflicting 2-action combinations.
-   - Server-side regex verifier checks every integer, flight ID, tail ID, crew ID, and connection ID in LLM prose against the deterministic allow-list, falling back cleanly to the engine briefing if any token drifts or when running offline.
-3. **FlightRadar24-Style Operator UI:**
-   - Aspect-corrected India vector radar (`src/components/RadarMap.tsx`), draggable storm cells, animated ATC holding-pattern racetrack orbits, Before/After ghost recovery overlays, synchronized 16-tail Gantt with `600m` duty cutoff walls, and plain-English crisis compiling (`/api/parse-crisis`).
+1. **Fixed-Point Tail-Chain Cascade (`src/lib/sim/engine.ts`):**
+   - Evaluates `min_turnaround_minutes = 30` and computes exact `bufferAbsorbedMin` per leg *before* checking airport closure holds (`[startMin, endMin)`), preventing late inbound flights from operating into/out of a closed hub.
+   - Models Ground Delay Program (GDP) holds vs. airborne ATC holding orbits (`holdingStartMin`–`holdingEndMin`).
+   - Enforces the `600`-minute crew legal duty limit (`CREW_BREACH`), grounding breached legs and excluding them from operated delay counts.
+   - Uses exact inclusion-exclusion to prevent double-counting connecting passengers when both `from_flight` and `to_flight` are grounded.
+2. **Physically Valid Recovery & AI Hallucination Verifier (`src/lib/sim/recovery.ts`, `src/lib/sim/verify-ai.ts`):**
+   - Evaluates spare aircraft swaps (`VT-DS17` at `BLR`, `VT-DS18` at `DEL` with fresh reserve crew clock `takeoverDep - 30m` still bound by `600m`), physically legal cancellations (tail last leg or matched `A→B` + `B→A` round-trip pairs — zero aircraft teleportation), `<=45m` hub connection holds, and incremental follow-on recoveries.
+   - `/api/dispatch` runs a regex allow-list verifier (`verifyAiBriefing`) over every integer, flight ID, tail ID, crew ID, and connection ID in LLM output, falling back automatically if any token drifts.
+3. **Simulation-Trained Surrogate ML (`scripts/train-risk-model.ts`, `src/lib/ml/predict.ts`):**
+   - Trained offline across `3,000` deterministic simulation runs (`80/20` split) using Ridge Regression (`R² = 0.651`, `MAE = 11.62`) for `0–100` pre-storm hub fragility and L2 Logistic Regression (`ROC-AUC = 0.914`) for `+30m` storm-extension crew-breach risk, serving `<1ms` pure-TS inference with zero conflict with deterministic counts.
 
-## Local Development & Tests
+## How the Solution Works
+- **`/` (Kinetic Story):** Interactive sculpted relief map of India where users toggle live weather environments (*Mumbai Monsoon*, *Delhi Winter Fog*, *Guwahati Spoke*, *Dual-Hub Crisis*) and scroll through 3 choreographed modules explaining tail-chain cascades, ML fragility, and verified recovery.
+- **`/simulator` (Top-Down Pan/Zoom OCC Simulator):** Full pan-and-zoom sculpted relief map of India with `Simple` and `Advanced` view modes, 2×2 flight telemetry, hourly flight-density histogram scrubber (`05:30–22:30 IST`), drag-and-drop storm triggers, `⌘K` plain-English crisis compiler (`/api/parse-crisis`), Before/After ghost diff overlays, and 1-click recovery + `Undo`.
+- **`/intelligence` (ML & Stress-Test Lab):** Interactive 16-airport vulnerability ranking explorer and live browser execution of all 4 judging stress tests.
 
-```bash
-npm install
-npm test          # Vitest deterministic engine, recovery & verifier suite
-npm run typecheck # TypeScript check
-npm run dev       # http://localhost:3000
-```
+## Assumptions Made
+- Single operating day (`05:30–22:30 IST`); closures are evaluated as half-open intervals `[startMin, endMin)`.
+- Standby reserve crews on `VT-DS17` (`BLR`) and `VT-DS18` (`DEL`) begin their `600`-minute duty clock `30` minutes prior to takeover departure (`takeoverDep - 30m`).
+- Only final legs or matched `A→B` + `B→A` round-trip spoke pairs may be cancelled so aircraft stay physically positioned for downstream legs.
+- Without `AI_GATEWAY_API_KEY` or `GEMINI_API_KEY`, `/api/dispatch` and `/api/parse-crisis` run transparently in deterministic engine mode with full functionality.
 
-## Deploy to Vercel
-
-Zero-config Next.js deployment on Node.js Fluid Compute:
-
-```bash
-npx vercel --prod
-```
-
-Optional environment variable in Vercel Project Settings: `AI_GATEWAY_API_KEY` (or `GEMINI_API_KEY`). Without any key set, Domino Sky runs seamlessly in deterministic `ENGINE MODE`.
-
-## Deploy to Google Cloud Run
-
-Includes `output: "standalone"` in `next.config.ts` and a multi-stage Node 24 LTS `Dockerfile` listening on `PORT=8080`:
+## Local Development, Tests & Deployment
 
 ```bash
-gcloud run deploy domino-sky --source . --platform managed --allow-unauthenticated
+pnpm install
+pnpm test          # 18 Vitest unit tests (engine, recovery, verifier, ML)
+pnpm run typecheck # Strict TypeScript check
+pnpm run build     # Standalone Next.js production build
+pnpm start         # http://localhost:3000
 ```
+
+- **Vercel:** `npx vercel --prod` (runs on default Node.js Fluid Compute).
+- **Google Cloud Run:** `gcloud run deploy domino-sky --source . --platform managed --allow-unauthenticated` (uses `Dockerfile` with `output: "standalone"` on `PORT=8080`).

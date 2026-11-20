@@ -75,21 +75,21 @@ export function AirportClosurePopover({
     <div
       role="dialog"
       aria-label={`Configure closure for ${airport.id}`}
-      className="absolute right-3 top-3 z-20 w-72 rounded-lg border border-[#222C38] bg-[#11161D] p-3.5 shadow-xl"
+      className="absolute right-3 top-16 z-20 w-72 rounded-xl border border-[#E2E8F0] bg-[#FFFFFF] p-3.5 shadow-lg"
     >
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-1.5">
-            <span className="font-mono text-sm font-bold text-[#FBBF24]">
+            <span className="font-mono text-sm font-bold text-[#2563EB]">
               {airport.id}
             </span>
-            <span className="rounded-sm border border-[#222C38] bg-[#18202A] px-1.5 py-0.5 font-mono text-[10px] uppercase text-[#94A3B8]">
+            <span className="rounded-sm border border-[#E2E8F0] bg-[#F8FAFC] px-1.5 py-0.5 font-mono text-[10px] text-[#475569]">
               {airport.tier.replace("_", " ")}
             </span>
           </div>
-          <p className="mt-0.5 text-xs text-[#94A3B8]">
+          <p className="mt-0.5 text-xs text-[#475569]">
             {airport.city} · Cap {airport.capacity_per_hour}/hr ·{" "}
-            <span className="font-mono text-[#F1F5F9]">
+            <span className="font-mono font-semibold text-[#0F172A]">
               {touchingFlights.length}
             </span>{" "}
             flights ({disruptedTouching} impacted)
@@ -100,7 +100,7 @@ export function AirportClosurePopover({
           type="button"
           onClick={onClose}
           aria-label="Close airport dialog"
-          className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-[#222C38] bg-[#18202A] text-[#94A3B8] hover:text-[#F1F5F9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+          className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A]"
         >
           <X className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
@@ -111,7 +111,7 @@ export function AirportClosurePopover({
           <div>
             <label
               htmlFor="closure-start"
-              className="block text-[11px] font-medium text-[#94A3B8]"
+              className="block text-[11px] font-medium text-[#475569]"
             >
               Close From (IST)
             </label>
@@ -125,13 +125,13 @@ export function AirportClosurePopover({
                 setStartStr(e.target.value);
                 setError(null);
               }}
-              className="mt-1 h-8 w-full rounded-md border border-[#222C38] bg-[#090D12] px-2 font-mono text-xs text-[#F1F5F9] focus-visible:border-amber-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+              className="mt-1 h-8 w-full rounded-md border border-[#CBD5E1] bg-[#F8FAFC] px-2 font-mono text-xs text-[#0F172A] focus-visible:border-[#2563EB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
             />
           </div>
           <div>
             <label
               htmlFor="closure-end"
-              className="block text-[11px] font-medium text-[#94A3B8]"
+              className="block text-[11px] font-medium text-[#475569]"
             >
               Reopen At (IST)
             </label>
@@ -145,14 +145,14 @@ export function AirportClosurePopover({
                 setEndStr(e.target.value);
                 setError(null);
               }}
-              className="mt-1 h-8 w-full rounded-md border border-[#222C38] bg-[#090D12] px-2 font-mono text-xs text-[#F1F5F9] focus-visible:border-amber-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+              className="mt-1 h-8 w-full rounded-md border border-[#CBD5E1] bg-[#F8FAFC] px-2 font-mono text-xs text-[#0F172A] focus-visible:border-[#2563EB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
             />
           </div>
         </div>
 
         <div>
-          <span className="block text-[10px] font-medium uppercase tracking-wider text-[#94A3B8]">
-            Quick Duration
+          <span className="block text-[11px] font-medium text-[#475569]">
+            Quick duration
           </span>
           <div className="mt-1.5 flex flex-wrap gap-1">
             {DURATION_PRESETS.map((p) => (
@@ -160,7 +160,7 @@ export function AirportClosurePopover({
                 key={p.mins}
                 type="button"
                 onClick={() => applyDurationPreset(p.mins)}
-                className="cursor-pointer rounded-sm border border-[#222C38] bg-[#18202A] px-2 py-1 font-mono text-[11px] text-[#F1F5F9] transition-colors duration-150 hover:border-amber-500/60 hover:bg-[#1F2937] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                className="cursor-pointer rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-2 py-1 font-mono text-[11px] text-[#0F172A] hover:border-[#2563EB]/40 hover:bg-[#EFF6FF]"
               >
                 {p.label}
               </button>
@@ -169,7 +169,7 @@ export function AirportClosurePopover({
         </div>
 
         {error && (
-          <p className="text-xs font-medium text-[#F87171]" role="alert">
+          <p className="text-xs font-medium text-[#DC2626]" role="alert">
             {error}
           </p>
         )}
@@ -177,7 +177,7 @@ export function AirportClosurePopover({
         <div className="flex items-center gap-2 pt-1">
           <button
             type="submit"
-            className="flex h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md bg-[#F59E0B] px-3 text-xs font-semibold text-[#090D12] transition-colors duration-150 hover:bg-amber-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+            className="flex h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md bg-[#DC2626] px-3 text-xs font-semibold text-white transition-colors duration-150 hover:bg-[#B91C1C]"
           >
             <CloudLightning className="h-3.5 w-3.5" aria-hidden="true" />
             {existingClosure ? "Update Closure" : "Close Airport"}
@@ -191,7 +191,7 @@ export function AirportClosurePopover({
                 onClose();
               }}
               aria-label={`Reopen ${airport.id}`}
-              className="flex h-8 cursor-pointer items-center justify-center rounded-md border border-red-500/40 bg-[#18202A] px-2.5 text-xs font-medium text-[#F87171] transition-colors duration-150 hover:bg-[#1F2937] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+              className="flex h-8 cursor-pointer items-center justify-center rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 text-xs font-medium text-[#475569] hover:bg-[#F1F5F9] hover:text-[#DC2626]"
             >
               <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
