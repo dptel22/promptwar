@@ -38,7 +38,7 @@ export function FlightInspector({
   return (
     <aside
       aria-label={`Flight telemetry for ${flight.flight_id}`}
-      className="absolute left-3 top-20 z-20 max-h-[calc(100%-140px)] w-80 overflow-y-auto rounded-xl border border-[#E2E8F0] bg-[#FFFFFF] p-3.5 shadow-lg"
+      className="absolute bottom-3 right-3 z-20 max-h-[calc(100%-90px)] w-80 overflow-y-auto rounded-xl border border-[#E6EBF2] bg-[#FFFFFF] p-3.5 shadow-[0_8px_28px_rgba(148,163,184,0.18)]"
     >
       <div className="flex items-start justify-between gap-2">
         <div>
@@ -46,7 +46,7 @@ export function FlightInspector({
             <span className="font-mono text-sm font-bold text-[#0F172A]">
               {flight.flight_id}
             </span>
-            <span className="rounded-sm border border-[#E2E8F0] bg-[#F8FAFC] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[#475569]">
+            <span className="rounded-sm border border-[#E6EBF2] bg-[#FBFCFD] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[#475569]">
               {flight.activeTailId} · Leg {flight.leg_order}
             </span>
           </div>
@@ -66,14 +66,14 @@ export function FlightInspector({
           type="button"
           onClick={onClose}
           aria-label="Close flight inspector"
-          className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A]"
+          className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
         >
           <X className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </div>
 
       {/* Status Row */}
-      <div className="mt-3 flex items-center justify-between border-y border-[#E2E8F0] py-2">
+      <div className="mt-3 flex items-center justify-between border-y border-[#E6EBF2] py-2">
         <StatusTag flight={flight} />
         <div className="text-right font-mono text-[11px] tabular-nums">
           <div className="text-[#475569]">
@@ -84,7 +84,7 @@ export function FlightInspector({
               className={
                 flight.delayMin > 0
                   ? "font-semibold text-[#B45309]"
-                  : "font-semibold text-[#059669]"
+                  : "font-semibold text-[#047857]"
               }
             >
               Actual {formatHHMM(flight.actualDepMin)}–
@@ -96,7 +96,7 @@ export function FlightInspector({
 
       {/* Turnaround Buffer Absorption */}
       {flight.scheduledTurnaroundMin !== null && (
-        <div className="mt-2.5 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-2.5">
+        <div className="mt-2.5 rounded-lg border border-[#E6EBF2] bg-[#FBFCFD] p-2.5">
           <div className="flex items-center justify-between text-[11px]">
             <span className="font-medium text-[#475569]">
               Turnaround slack (30m min)
@@ -107,7 +107,7 @@ export function FlightInspector({
             </span>
           </div>
           {flight.bufferAbsorbedMin > 0 ? (
-            <p className="mt-1 font-mono text-[11px] font-semibold text-[#059669]">
+            <p className="mt-1 font-mono text-[11px] font-semibold text-[#047857]">
               Absorbed {flight.bufferAbsorbedMin}m inbound delay
               {flight.delayMin === 0 ? " — downstream clean" : ""}
             </p>
@@ -123,28 +123,28 @@ export function FlightInspector({
       )}
 
       {/* Crew Duty Clock */}
-      <div className="mt-2.5 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-2.5">
+      <div className="mt-2.5 rounded-lg border border-[#E6EBF2] bg-[#FBFCFD] p-2.5">
         <div className="flex items-center justify-between text-[11px]">
           <span className="font-medium text-[#475569]">
             Crew {flight.activeCrewId} duty (600m max)
           </span>
           <span
             className={`font-mono font-semibold tabular-nums ${
-              flight.crewOvertimeMin > 0 ? "text-[#DC2626]" : "text-[#0F172A]"
+              flight.crewOvertimeMin > 0 ? "text-[#B91C1C]" : "text-[#0F172A]"
             }`}
           >
             {flight.crewProjectedDutyMin}m / 600m
             {flight.crewOvertimeMin > 0 ? ` (+${flight.crewOvertimeMin}m)` : ""}
           </span>
         </div>
-        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[#E2E8F0]">
+        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[#E6EBF2]">
           <div
             className={`h-full ${
               flight.crewOvertimeMin > 0
                 ? "bg-[#DC2626]"
                 : dutyUsedPct >= 92
                   ? "bg-[#D97706]"
-                  : "bg-[#2563EB]"
+                  : "bg-[#2B79FB]"
             }`}
             style={{ width: `${dutyUsedPct}%` }}
           />
@@ -163,14 +163,14 @@ export function FlightInspector({
                 <button
                   type="button"
                   onClick={() => onSelectFlight(step.flightId)}
-                  className="w-full cursor-pointer rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 py-1.5 text-left transition-colors duration-150 hover:border-[#2563EB]/40 hover:bg-[#EFF6FF]"
+                  className="w-full cursor-pointer rounded-md border border-[#E6EBF2] bg-[#FBFCFD] px-2.5 py-1.5 text-left transition-colors duration-150 hover:border-[#2B79FB]/40 hover:bg-[#EFF6FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
                 >
                   <div className="flex items-center justify-between font-mono text-[11px]">
-                    <span className="font-semibold text-[#2563EB]">
+                    <span className="font-semibold text-[#1D4ED8]">
                       Hop {idx + 1}: {step.flightId} ({step.airportId})
                     </span>
                     {step.delayMin > 0 && (
-                      <span className="font-semibold text-[#DC2626]">
+                      <span className="font-semibold text-[#B91C1C]">
                         +{step.delayMin}m
                       </span>
                     )}
@@ -195,7 +195,7 @@ export function FlightInspector({
             {relatedConnections.map((cx) => (
               <div
                 key={cx.connection_id}
-                className="flex items-center justify-between rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-2 py-1 text-[11px]"
+                className="flex items-center justify-between rounded-md border border-[#E6EBF2] bg-[#FBFCFD] px-2 py-1 text-[11px]"
               >
                 <span className="font-mono text-[#0F172A]">
                   {cx.connection_id}: {cx.from_flight}→{cx.to_flight} (
@@ -204,8 +204,8 @@ export function FlightInspector({
                 <span
                   className={`font-mono font-semibold ${
                     cx.status === "INTACT"
-                      ? "text-[#059669]"
-                      : "text-[#DC2626]"
+                      ? "text-[#047857]"
+                      : "text-[#B91C1C]"
                   }`}
                 >
                   {cx.status === "INTACT"
@@ -226,7 +226,7 @@ export function FlightInspector({
 function StatusTag({ flight }: { flight: SimulatedFlight }) {
   if (flight.status === "ON_TIME") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-sm border border-[#059669]/30 bg-[#ECFDF5] px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#059669]">
+      <span className="inline-flex items-center gap-1 rounded-sm border border-[#047857]/30 bg-[#ECFDF5] px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#047857]">
         <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
         ON TIME
       </span>
@@ -242,7 +242,7 @@ function StatusTag({ flight }: { flight: SimulatedFlight }) {
   }
   if (flight.status === "CREW_BREACH") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-sm border border-[#DC2626]/30 bg-[#FEE2E2] px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#DC2626]">
+      <span className="inline-flex items-center gap-1 rounded-sm border border-[#B91C1C]/30 bg-[#FEE2E2] px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#B91C1C]">
         <ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" />
         CREW BREACH
       </span>

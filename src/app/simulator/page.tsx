@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { CloudLightning, Layers, Plane } from "lucide-react";
+import { ChevronDown, ChevronUp, CloudLightning, Layers, Plane } from "lucide-react";
 import { AiDispatcherDrawer } from "@/components/AiDispatcherDrawer";
 import { AirportClosurePopover } from "@/components/AirportClosurePopover";
 import { CrisisCommandModal } from "@/components/CrisisCommandModal";
@@ -13,7 +13,11 @@ import { CLOCK_MAX, CLOCK_MIN, TimelineScrubber } from "@/components/TimelineScr
 import { SCENARIO_PRESETS, TopTelemetryBar } from "@/components/TopTelemetryBar";
 import { predictAllAirportFragilities } from "@/lib/ml/predict";
 import { DATASET, getAirportById, parseHHMM, simulateNetwork } from "@/lib/sim/engine";
-import { buildDeterministicBriefing, evaluateRecoveryCandidates } from "@/lib/sim/recovery";
+import {
+  areActionsCompatible,
+  buildDeterministicBriefing,
+  evaluateRecoveryCandidates,
+} from "@/lib/sim/recovery";
 import type {
   AirportClosure,
   DispatcherBriefing,
@@ -30,54 +34,72 @@ interface HistorySnapshot {
 
 const DEFAULT_PRESET = SCENARIO_PRESETS[0];
 
-function SimulatorContent() {
-  const searchParams = useSearchParams();
+function parseConfigFromParams(searchParamsString: string) {
+  const params = new URLSearchParams(searchParamsString);
+  const viewParam = params.get("view") === "advanced" ? "advanced" : "simple";
+  const airportParam = params.get("airport");
+  const startParam = Number(params.get("start"));
+  const durParam = Number(params.get("dur"));
 
-  const initialConfig = useMemo(() => {
-    const viewParam = searchParams.get("view") === "advanced" ? "advanced" : "simple";
-    const airportParam = searchParams.get("airport");
-    const startParam = Number(searchParams.get("start"));
-    const durParam = Number(searchParams.get("dur"));
+  if (airportParam && getAirportById(airportParam)) {
+    const startMin = Number.isFinite(startParam)
+      ? Math.max(300, Math.min(1350, Math.round(startParam)))
+      : 480;
+    const dur = Number.isFinite(durParam)
+      ? Math.max(15, Math.min(360, Math.round(durParam)))
+      : 90;
+    const endMin = Math.min(1380, startMin + dur);
 
-    if (airportParam && getAirportById(airportParam)) {
-      const startMin = Number.isFinite(startParam) && startParam >= 300 ? startParam : 480;
-      const dur = Number.isFinite(durParam) && durParam >= 15 ? durParam : 90;
-      return {
-        viewMode: viewParam as "simple" | "advanced",
-        presetId: "custom",
-        clockMin: Math.min(CLOCK_MAX, startMin + 30),
-        closures: [
-          {
-            id: `url-${airportParam}`,
-            airportId: airportParam,
-            startMin,
-            endMin: Math.min(CLOCK_MAX, startMin + dur),
-            label: `${airportParam} Closure`,
-          },
-        ] as AirportClosure[],
-      };
-    }
-
-    const presetParam = searchParams.get("preset");
-    const matched = SCENARIO_PRESETS.find((p) => p.id === presetParam) ?? DEFAULT_PRESET;
     return {
       viewMode: viewParam as "simple" | "advanced",
-      presetId: matched.id,
-      clockMin: matched.clockMin,
-      closures: matched.closures,
+      presetId: "custom",
+      clockMin: Math.min(CLOCK_MAX, startMin + 30),
+      closures: [
+        {
+          id: `url-${airportParam}`,
+          airportId: airportParam,
+          startMin,
+          endMin,
+          label: `${airportParam} Closure`,
+        },
+      ] as AirportClosure[],
     };
-  }, [searchParams]);
+  }
+
+  const presetParam = params.get("preset");
+  const matched =
+    SCENARIO_PRESETS.find((p) => p.id === presetParam) ?? DEFAULT_PRESET;
+  return {
+    viewMode: viewParam as "simple" | "advanced",
+    presetId: matched.id,
+    clockMin: matched.clockMin,
+    closures: matched.closures,
+  };
+}
+
+function SimulatorContent() {
+  const searchParams = useSearchParams();
+  const searchParamsKey = searchParams.toString();
+
+  const initialConfig = useMemo(
+    () => parseConfigFromParams(searchParamsKey),
+    [searchParamsKey]
+  );
 
   const [viewMode, setViewMode] = useState<"simple" | "advanced">(
     initialConfig.viewMode
   );
-  const [closures, setClosures] = useState<AirportClosure[]>(initialConfig.closures);
+  const [closures, setClosures] = useState<AirportClosure[]>(
+    initialConfig.closures
+  );
   const [activeActions, setActiveActions] = useState<RecoveryAction[]>([]);
-  const [activePresetId, setActivePresetId] = useState<string>(initialConfig.presetId);
+  const [activePresetId, setActivePresetId] = useState<string>(
+    initialConfig.presetId
+  );
   const [history, setHistory] = useState<HistorySnapshot[]>([]);
 
   const [clockMin, setClockMin] = useState<number>(initialConfig.clockMin);
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [speed, setSpeed] = useState<number>(10);
 
   const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
@@ -87,10 +109,12 @@ function SimulatorContent() {
     nonce: number;
   } | null>(null);
 
+  const [isFiltersOpen, setIsFiltersOpen] = useState<boolean>(false);
   const [isStormDragging, setIsStormDragging] = useState<boolean>(false);
   const [isCrisisModalOpen, setIsCrisisModalOpen] = useState<boolean>(false);
   const [isDispatcherOpen, setIsDispatcherOpen] = useState<boolean>(true);
-  const [showFragilityOverlay, setShowFragilityOverlay] = useState<boolean>(false);
+  const [showFragilityOverlay, setShowFragilityOverlay] =
+    useState<boolean>(false);
   const [previewCandidate, setPreviewCandidate] =
     useState<RecoveryCandidate | null>(null);
 
@@ -109,6 +133,31 @@ function SimulatorContent() {
   >("deterministic_engine");
   const [dispatchLoading, setDispatchLoading] = useState<boolean>(false);
   const dispatchAbortRef = useRef<AbortController | null>(null);
+  const isFirstMountRef = useRef<boolean>(true);
+
+  // Respect prefers-reduced-motion on mount without hydration mismatch
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setIsPlaying(false);
+    }
+  }, []);
+
+  // Sync state when URL searchParams change after initial mount
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    setViewMode(initialConfig.viewMode);
+    setClosures(initialConfig.closures);
+    setActiveActions([]);
+    setActivePresetId(initialConfig.presetId);
+    setHistory([]);
+    setPreviewCandidate(null);
+    setSelectedAirportId(null);
+    setSelectedFlightId(null);
+    setClockMin(initialConfig.clockMin);
+  }, [initialConfig]);
 
   // Keyboard shortcut Cmd/Ctrl + K for Crisis Prompt Modal
   useEffect(() => {
@@ -122,13 +171,25 @@ function SimulatorContent() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // Smooth 60fps requestAnimationFrame live flight progression
   useEffect(() => {
     if (!isPlaying) return;
-    const intervalMs = speed === 30 ? 120 : speed === 10 ? 280 : 900;
-    const timer = window.setInterval(() => {
-      setClockMin((prev) => (prev >= CLOCK_MAX ? CLOCK_MIN : prev + 1));
-    }, intervalMs);
-    return () => window.clearInterval(timer);
+    let rafId = 0;
+    let lastTs = performance.now();
+    const minsPerSec = speed === 30 ? 30 : speed === 10 ? 8 : 1.5;
+
+    const tick = (now: number) => {
+      const dtSec = Math.min(0.1, (now - lastTs) / 1000);
+      lastTs = now;
+      setClockMin((prev) => {
+        const next = prev + dtSec * minsPerSec;
+        return next >= CLOCK_MAX ? CLOCK_MIN : next;
+      });
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(rafId);
   }, [isPlaying, speed]);
 
   const simulation = useMemo(
@@ -136,7 +197,7 @@ function SimulatorContent() {
     [closures, activeActions]
   );
 
-  // Airport volume + disruption summary for left Image 3 style filter rail
+  // Airport volume + disruption summary for floating collapsible filter card
   const airportRows = useMemo(() => {
     const counts = new Map<string, { total: number; disrupted: number }>();
     for (const a of DATASET.airports) counts.set(a.id, { total: 0, disrupted: 0 });
@@ -145,7 +206,10 @@ function SimulatorContent() {
       o.total++;
       if (f.status !== "ON_TIME") o.disrupted++;
     }
-    const maxTotal = Math.max(1, ...Array.from(counts.values()).map((v) => v.total));
+    const maxTotal = Math.max(
+      1,
+      ...Array.from(counts.values()).map((v) => v.total)
+    );
     return DATASET.airports
       .map((a) => ({
         airport: a,
@@ -157,7 +221,10 @@ function SimulatorContent() {
   }, [simulation.flights]);
 
   const disruptedTails = useMemo(() => {
-    const map = new Map<string, { firstFlightId: string; maxDelay: number; breached: boolean }>();
+    const map = new Map<
+      string,
+      { firstFlightId: string; maxDelay: number; breached: boolean }
+    >();
     for (const f of simulation.flights) {
       if (f.status === "ON_TIME") continue;
       const cur = map.get(f.tail_id);
@@ -175,10 +242,11 @@ function SimulatorContent() {
     return Array.from(map.entries());
   }, [simulation.flights]);
 
-  const airportFragilities = useMemo(
-    () => predictAllAirportFragilities(clockMin, 90),
-    [clockMin]
-  );
+  const roundedClockMin = Math.round(clockMin);
+  const airportFragilities = useMemo(() => {
+    if (viewMode !== "advanced" || !showFragilityOverlay) return [];
+    return predictAllAirportFragilities(roundedClockMin, 90);
+  }, [viewMode, showFragilityOverlay, roundedClockMin]);
 
   const fetchDispatch = useCallback(
     async (targetClosures: AirportClosure[], actions: RecoveryAction[]) => {
@@ -227,7 +295,10 @@ function SimulatorContent() {
     const handle = window.setTimeout(() => {
       void fetchDispatch(closures, activeActions);
     }, 160);
-    return () => window.clearTimeout(handle);
+    return () => {
+      window.clearTimeout(handle);
+      dispatchAbortRef.current?.abort();
+    };
   }, [closures, activeActions, fetchDispatch]);
 
   function pushHistory() {
@@ -308,8 +379,17 @@ function SimulatorContent() {
   }
 
   function handleApplyCandidate(candidate: RecoveryCandidate) {
+    if (dispatchLoading) return;
+    const existingIds = new Set(activeActions.map((a) => a.id));
+    const compatibleNew = candidate.actions.filter(
+      (nextAct) =>
+        !existingIds.has(nextAct.id) &&
+        activeActions.every((ex) => areActionsCompatible(ex, nextAct))
+    );
+    if (compatibleNew.length === 0) return;
+
     pushHistory();
-    setActiveActions((prev) => [...prev, ...candidate.actions]);
+    setActiveActions((prev) => [...prev, ...compatibleNew]);
     setPreviewCandidate(null);
   }
 
@@ -343,113 +423,131 @@ function SimulatorContent() {
     ? simulation.flightsById[selectedFlightId]
     : undefined;
 
-  return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#F8FAFC] text-[#0F172A]">
-      <TopTelemetryBar
-        activePresetId={activePresetId}
-        closures={closures}
-        viewMode={viewMode}
-        canUndo={history.length > 0}
-        isDispatcherOpen={isDispatcherOpen}
-        onChangeViewMode={setViewMode}
-        onSelectPreset={handleSelectPreset}
-        onOpenCrisisModal={() => setIsCrisisModalOpen(true)}
-        onUndo={handleUndo}
-        onReset={handleReset}
-        onToggleDispatcher={() => setIsDispatcherOpen((v) => !v)}
-        onStormDragState={setIsStormDragging}
-      />
+  // Floating borderless 2x2 flight telemetry + collapsible airport/tail popover
+  const topLeftOverlay = (
+    <div className="flex flex-col items-start gap-2.5">
+      <div className="rounded-xl bg-[#FBFCFD]/90 pr-3 py-1">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#475569]">
+            Flight Statistics
+          </span>
+          {closures.length > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-[#FEE2E2] px-2 py-0.5 font-mono text-[10px] font-semibold text-[#B91C1C]">
+              <CloudLightning className="h-2.5 w-2.5" aria-hidden="true" />
+              {closures.map((c) => c.airportId).join("+")} CLOSED
+            </span>
+          )}
+        </div>
 
-      {/* Image 3 Inspired Top-Down 3-Zone Workspace */}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {/* Left Clean Statistics & Airport/Tail Filter Rail */}
-        <aside
-          aria-label="Network flight statistics and airport filters"
-          className="hidden w-64 shrink-0 flex-col divide-y divide-[#E2E8F0] overflow-y-auto border-r border-[#E2E8F0] bg-[#FFFFFF] md:flex"
-        >
-          {/* 2x2 Big Tabular Flight Statistics (FlightMapper.io layout) */}
-          <div className="p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-[#0F172A]">
-                Flight Statistics
-              </h2>
-              {closures.length > 0 && (
-                <span className="inline-flex items-center gap-1 rounded-sm bg-[#FEF2F2] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#DC2626]">
-                  <CloudLightning className="h-2.5 w-2.5" aria-hidden="true" />
-                  {closures.map((c) => c.airportId).join("+")} CLOSED
+        <div className="mt-2 grid grid-cols-2 gap-x-5 gap-y-2.5 font-mono tabular-nums">
+          <div>
+            <div className="text-xl font-bold leading-none text-[#0F172A]">
+              {m.delayedFlights}
+              {pm && pm.delayedFlights !== m.delayedFlights && (
+                <span className="ml-1 text-xs text-[#047857]">
+                  →{pm.delayedFlights}
                 </span>
               )}
             </div>
-
-            <div className="mt-3 grid grid-cols-2 gap-y-3 font-mono tabular-nums">
-              <div>
-                <div className="text-2xl font-bold leading-none text-[#0F172A]">
-                  {m.delayedFlights}
-                  {pm && pm.delayedFlights !== m.delayedFlights && (
-                    <span className="ml-1 text-xs text-[#059669]">
-                      →{pm.delayedFlights}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1 font-sans text-xs text-[#475569]">
-                  delayed flights
-                </div>
-              </div>
-
-              <div>
-                <div
-                  className={`text-2xl font-bold leading-none ${
-                    m.totalStrandedPax > 0 ? "text-[#DC2626]" : "text-[#0F172A]"
-                  }`}
-                >
-                  {m.totalStrandedPax}
-                  {pm && pm.totalStrandedPax !== m.totalStrandedPax && (
-                    <span className="ml-1 text-xs text-[#059669]">
-                      →{pm.totalStrandedPax}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1 font-sans text-xs text-[#475569]">
-                  stranded pax
-                </div>
-              </div>
-
-              <div>
-                <div
-                  className={`text-2xl font-bold leading-none ${
-                    m.crewBreaches > 0 ? "text-[#DC2626]" : "text-[#0F172A]"
-                  }`}
-                >
-                  {m.crewBreaches}
-                  {pm && pm.crewBreaches !== m.crewBreaches && (
-                    <span className="ml-1 text-xs text-[#059669]">
-                      →{pm.crewBreaches}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1 font-sans text-xs text-[#475569]">
-                  crew breaches
-                </div>
-              </div>
-
-              <div>
-                <div className="text-2xl font-bold leading-none text-[#0F172A]">
-                  {m.totalDelayMinutes}m
-                </div>
-                <div className="mt-1 font-sans text-xs text-[#475569]">
-                  total delay
-                </div>
-              </div>
+            <div className="mt-0.5 font-sans text-[11px] text-[#475569]">
+              delayed flights
             </div>
           </div>
 
-          {/* Disrupted Aircraft Chains (Quick Flight-Specific Focus) */}
+          <div>
+            <div
+              className={`text-xl font-bold leading-none ${
+                m.totalStrandedPax > 0 ? "text-[#B91C1C]" : "text-[#0F172A]"
+              }`}
+            >
+              {m.totalStrandedPax}
+              {pm && pm.totalStrandedPax !== m.totalStrandedPax && (
+                <span className="ml-1 text-xs text-[#047857]">
+                  →{pm.totalStrandedPax}
+                </span>
+              )}
+            </div>
+            <div className="mt-0.5 font-sans text-[11px] text-[#475569]">
+              stranded pax
+            </div>
+          </div>
+
+          <div>
+            <div
+              className={`text-xl font-bold leading-none ${
+                m.crewBreaches > 0 ? "text-[#B91C1C]" : "text-[#0F172A]"
+              }`}
+            >
+              {m.crewBreaches}
+              {pm && pm.crewBreaches !== m.crewBreaches && (
+                <span className="ml-1 text-xs text-[#047857]">
+                  →{pm.crewBreaches}
+                </span>
+              )}
+            </div>
+            <div className="mt-0.5 font-sans text-[11px] text-[#475569]">
+              crew breaches
+            </div>
+          </div>
+
+          <div>
+            <div className="text-xl font-bold leading-none text-[#0F172A]">
+              {m.totalDelayMinutes}m
+              {pm && pm.totalDelayMinutes !== m.totalDelayMinutes && (
+                <span className="ml-1 text-xs text-[#047857]">
+                  →{pm.totalDelayMinutes}m
+                </span>
+              )}
+            </div>
+            <div className="mt-0.5 font-sans text-[11px] text-[#475569]">
+              total delay
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Collapsible Trigger Row */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          aria-expanded={isFiltersOpen}
+          onClick={() => setIsFiltersOpen((v) => !v)}
+          className="flex h-7 cursor-pointer items-center gap-1.5 rounded-full border border-[#E6EBF2] bg-[#FFFFFF] px-3 text-xs font-medium text-[#0F172A] shadow-[0_2px_10px_rgba(148,163,184,0.12)] transition-colors duration-150 hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
+        >
+          <span>Airports &amp; Disrupted Tails</span>
+          {isFiltersOpen ? (
+            <ChevronUp className="h-3.5 w-3.5 text-[#475569]" aria-hidden="true" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5 text-[#475569]" aria-hidden="true" />
+          )}
+        </button>
+
+        {viewMode === "advanced" && (
+          <button
+            type="button"
+            aria-pressed={showFragilityOverlay}
+            onClick={() => setShowFragilityOverlay((v) => !v)}
+            className={`flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-xs font-medium shadow-[0_2px_10px_rgba(148,163,184,0.12)] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB] ${
+              showFragilityOverlay
+                ? "border-[#1D4ED8] bg-[#EFF6FF] text-[#1D4ED8]"
+                : "border-[#E6EBF2] bg-[#FFFFFF] text-[#475569] hover:text-[#0F172A]"
+            }`}
+          >
+            <Layers className="h-3.5 w-3.5" aria-hidden="true" />
+            Hub Fragility Rings
+          </button>
+        )}
+      </div>
+
+      {/* Lightweight Floating Card: Disrupted Tails & 16-Airport List */}
+      {isFiltersOpen && (
+        <div className="max-h-[52vh] w-72 overflow-y-auto rounded-xl border border-[#E6EBF2] bg-[#FFFFFF] p-3 shadow-[0_10px_28px_rgba(148,163,184,0.18)]">
           {disruptedTails.length > 0 && (
-            <div className="p-4">
-              <div className="text-xs font-semibold text-[#0F172A]">
+            <div className="mb-3 border-b border-[#E6EBF2] pb-2.5">
+              <div className="text-[11px] font-semibold text-[#0F172A]">
                 Disrupted aircraft ({disruptedTails.length})
               </div>
-              <div className="mt-2 space-y-1">
+              <div className="mt-1.5 space-y-1">
                 {disruptedTails.slice(0, 6).map(([tailId, info]) => {
                   const active =
                     selectedFlightId &&
@@ -458,11 +556,14 @@ function SimulatorContent() {
                     <button
                       key={tailId}
                       type="button"
-                      onClick={() => setSelectedFlightId(info.firstFlightId)}
-                      className={`flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1 text-xs transition-colors duration-150 ${
+                      onClick={() => {
+                        setSelectedFlightId(info.firstFlightId);
+                        setIsFiltersOpen(false);
+                      }}
+                      className={`flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1 text-xs transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB] ${
                         active
-                          ? "bg-[#EFF6FF] font-semibold text-[#2563EB]"
-                          : "hover:bg-[#F1F5F9]"
+                          ? "bg-[#EFF6FF] font-semibold text-[#1D4ED8]"
+                          : "hover:bg-[#F8FAFC]"
                       }`}
                     >
                       <span className="inline-flex items-center gap-1.5 font-mono">
@@ -471,7 +572,7 @@ function SimulatorContent() {
                       </span>
                       <span
                         className={`font-mono text-[11px] font-semibold ${
-                          info.breached ? "text-[#DC2626]" : "text-[#B45309]"
+                          info.breached ? "text-[#B91C1C]" : "text-[#B45309]"
                         }`}
                       >
                         {info.breached ? "BREACH" : `+${info.maxDelay}m`}
@@ -483,15 +584,14 @@ function SimulatorContent() {
             </div>
           )}
 
-          {/* Airports with Volume Bars (Image 3 Filter List Style) */}
-          <div className="flex-1 p-4">
+          <div>
             <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-[#0F172A]">
+              <span className="text-[11px] font-semibold text-[#0F172A]">
                 Airports (16)
-              </h2>
-              <span className="text-[11px] text-[#475569]">Click to close</span>
+              </span>
+              <span className="text-[10px] text-[#475569]">Click to close</span>
             </div>
-            <div className="mt-2 space-y-1">
+            <div className="mt-1.5 space-y-1">
               {airportRows.map(({ airport, total, disrupted, pct }) => {
                 const isClosed = closures.some((c) => c.airportId === airport.id);
                 return (
@@ -504,13 +604,14 @@ function SimulatorContent() {
                         airportId: airport.id,
                         nonce: Date.now(),
                       });
+                      setIsFiltersOpen(false);
                     }}
-                    className={`relative flex w-full cursor-pointer items-center justify-between overflow-hidden rounded-md px-2 py-1.5 text-left text-xs transition-colors duration-150 ${
+                    className={`relative flex w-full cursor-pointer items-center justify-between overflow-hidden rounded-md px-2 py-1.5 text-left text-xs transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB] ${
                       isClosed
-                        ? "border border-[#FECACA] bg-[#FEF2F2] text-[#DC2626]"
+                        ? "border border-[#FECACA] bg-[#FEF2F2] text-[#B91C1C]"
                         : selectedAirportId === airport.id
-                          ? "bg-[#EFF6FF] text-[#2563EB]"
-                          : "hover:bg-[#F1F5F9]"
+                          ? "bg-[#EFF6FF] text-[#1D4ED8]"
+                          : "hover:bg-[#F8FAFC]"
                     }`}
                   >
                     <span
@@ -539,10 +640,34 @@ function SimulatorContent() {
               })}
             </div>
           </div>
-        </aside>
+        </div>
+      )}
+    </div>
+  );
 
-        {/* Center Sculpted Map + Dedicated Bottom Histogram Scrubber + Optional Advanced Gantt */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+  return (
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#FBFCFD] text-[#0F172A]">
+      <TopTelemetryBar
+        activePresetId={activePresetId}
+        closures={closures}
+        viewMode={viewMode}
+        canUndo={history.length > 0}
+        isDispatcherOpen={isDispatcherOpen}
+        candidateCount={evaluation?.candidates.length ?? 0}
+        isMapExpanded={!isDispatcherOpen}
+        onChangeViewMode={setViewMode}
+        onSelectPreset={handleSelectPreset}
+        onOpenCrisisModal={() => setIsCrisisModalOpen(true)}
+        onUndo={handleUndo}
+        onReset={handleReset}
+        onToggleDispatcher={() => setIsDispatcherOpen((v) => !v)}
+        onToggleFullscreenMap={() => setIsDispatcherOpen((v) => !v)}
+        onStormDragState={setIsStormDragging}
+      />
+
+      {/* Full-Bleed Map Center + Floating Scrubber + Optional Right Dispatcher */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[#FBFCFD]">
           <main className="relative min-h-0 flex-1 overflow-hidden">
             <RadarMap
               simulation={simulation}
@@ -554,26 +679,12 @@ function SimulatorContent() {
               showFragilityOverlay={viewMode === "advanced" && showFragilityOverlay}
               airportFragilities={airportFragilities}
               focusAirportSignal={focusAirportSignal}
+              topLeftOverlay={topLeftOverlay}
               onSelectFlight={(fid) => setSelectedFlightId(fid)}
               onSelectAirport={(aid) => setSelectedAirportId(aid)}
               onDropStormOnAirport={handleDropStormOnAirport}
               onRemoveClosure={handleRemoveClosure}
             />
-
-            {viewMode === "advanced" && (
-              <button
-                type="button"
-                onClick={() => setShowFragilityOverlay((v) => !v)}
-                className={`absolute left-3 top-20 z-10 flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors duration-150 ${
-                  showFragilityOverlay
-                    ? "border-[#2563EB] bg-[#EFF6FF] text-[#2563EB]"
-                    : "border-[#E2E8F0] bg-[#FFFFFF] text-[#475569] hover:text-[#0F172A]"
-                }`}
-              >
-                <Layers className="h-3.5 w-3.5" aria-hidden="true" />
-                Hub Fragility Rings
-              </button>
-            )}
 
             {selectedFlight && (
               <FlightInspector
@@ -642,6 +753,11 @@ function SimulatorContent() {
           onUndoRecovery={handleUndo}
           onRefresh={() => void fetchDispatch(closures, activeActions)}
           onClose={() => setIsDispatcherOpen(false)}
+          onApplySuggestedClosures={handleApplyCrisisClosures}
+          onFocusFlight={(fid) => setSelectedFlightId(fid)}
+          onFocusAirport={(aid) =>
+            setFocusAirportSignal({ airportId: aid, nonce: Date.now() })
+          }
         />
       </div>
 
@@ -658,7 +774,7 @@ export default function SimulatorPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex h-screen items-center justify-center bg-[#F8FAFC] font-mono text-sm text-[#475569]">
+        <div className="flex h-screen items-center justify-center bg-[#FBFCFD] font-mono text-sm text-[#475569]">
           Loading Domino Sky Radar...
         </div>
       }

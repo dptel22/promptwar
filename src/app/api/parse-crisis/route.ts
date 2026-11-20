@@ -40,7 +40,16 @@ function resolveModel() {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON payload" },
+        { status: 400 }
+      );
+    }
+
     const parsed = ParseRequestSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
@@ -60,10 +69,10 @@ export async function POST(req: Request) {
           model,
           output: Output.object({ schema: CrisisOutputSchema }),
           abortSignal: AbortSignal.timeout(6000),
-          prompt: `Convert this plain-English Indian airport disruption request into structured airport closure time windows in minutes since 00:00 IST (e.g. 08:00 = 480, 09:30 = 570, 12:00 = 720).
+          system: `Convert a plain-English Indian airport disruption request into structured airport closure time windows in minutes since 00:00 IST (e.g. 08:00 = 480, 09:30 = 570, 12:00 = 720).
 Valid airports: ${airportGuide}.
-Ensure endMin > startMin for every closure.
-Request: "${parsed.data.prompt}"`,
+Ensure endMin > startMin for every closure.`,
+          prompt: parsed.data.prompt,
         });
 
         const validClosures: AirportClosure[] = output.closures

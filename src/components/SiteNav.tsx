@@ -7,20 +7,20 @@ import { ArrowUpRight, Radar } from "lucide-react";
 const NAV_ITEMS = [
   { href: "/", label: "Story" },
   { href: "/simulator", label: "Simulator" },
-  { href: "/intelligence", label: "Intelligence" },
-];
+  { href: "/about", label: "About" },
+] as const;
 
 export function SiteNav() {
   const pathname = usePathname();
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 w-full items-center justify-between border-b border-[#E2E8F0] bg-[#FFFFFF] px-4 lg:px-8">
+    <header className="sticky top-0 z-30 flex h-14 w-full items-center justify-between border-b border-[#E6EBF2] bg-[#FFFFFF] px-4 lg:px-8">
       <Link
         href="/"
-        className="flex items-center gap-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] rounded-md"
+        className="flex items-center gap-2.5 rounded-md px-1 py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
       >
-        <span className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E2E8F0] bg-[#F8FAFC]">
-          <Radar className="h-4 w-4 text-[#2563EB]" aria-hidden="true" />
+        <span className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E6EBF2] bg-[#FBFCFD]">
+          <Radar className="h-4 w-4 text-[#1D4ED8]" aria-hidden="true" />
         </span>
         <span className="font-display text-base font-bold tracking-tight text-[#0F172A]">
           Domino Sky
@@ -34,9 +34,10 @@ export function SiteNav() {
             <Link
               key={item.href}
               href={item.href}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] ${
+              aria-current={active ? "page" : undefined}
+              className={`rounded-md px-3 py-1.5 font-mono text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB] sm:text-[13px] ${
                 active
-                  ? "bg-[#EFF6FF] text-[#2563EB]"
+                  ? "bg-[#EFF6FF] text-[#1D4ED8]"
                   : "text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A]"
               }`}
             >
@@ -48,9 +49,9 @@ export function SiteNav() {
 
       <Link
         href="/simulator"
-        className="flex h-8 items-center gap-1.5 rounded-md bg-[#2563EB] px-3.5 text-xs font-semibold text-white transition-colors duration-150 hover:bg-[#1D4ED8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-2"
+        className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#1D4ED8] px-3.5 text-xs font-semibold text-white transition-colors duration-150 hover:bg-[#1E40AF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB] focus-visible:ring-offset-2"
       >
-        <span>Open Simulator</span>
+        <span>Launch Simulator</span>
         <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
       </Link>
     </header>

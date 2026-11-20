@@ -18,6 +18,7 @@ import type {
 export const DATASET: DominoDataset = rawDataset as DominoDataset;
 
 const AIRPORTS_BY_ID = new Map(DATASET.airports.map((a) => [a.id, a]));
+const FLIGHTS_BY_ID = new Map(DATASET.flights.map((f) => [f.flight_id, f]));
 const SPARES_BY_ID = new Map(DATASET.spare_aircraft.map((s) => [s.tail_id, s]));
 const CREWS_BY_TAIL = new Map(DATASET.crews.map((c) => [c.tail_id, c]));
 const CONNECTIONS_BY_ID = new Map(DATASET.connections.map((c) => [c.connection_id, c]));
@@ -137,6 +138,7 @@ export function simulateNetwork(
   const minTurnaround = DATASET.meta.min_turnaround_minutes;
   const cancelledIds = new Set<string>();
   const spareSwapByFlightId = new Map<string, string>();
+  const usedSpareIds = new Set<string>();
   const holdByFlightId = new Map<
     string,
     Extract<RecoveryAction, { type: "HOLD_CONNECTION" }>
@@ -146,7 +148,17 @@ export function simulateNetwork(
     if (action.type === "CANCEL_FLIGHT") {
       for (const fid of action.flightIds) cancelledIds.add(fid);
     } else if (action.type === "SWAP_SPARE") {
-      spareSwapByFlightId.set(action.targetFlightId, action.spareTailId);
+      const spare = SPARES_BY_ID.get(action.spareTailId);
+      const targetFlight = FLIGHTS_BY_ID.get(action.targetFlightId);
+      if (
+        spare &&
+        targetFlight &&
+        spare.base === targetFlight.origin &&
+        !usedSpareIds.has(action.spareTailId)
+      ) {
+        usedSpareIds.add(action.spareTailId);
+        spareSwapByFlightId.set(action.targetFlightId, action.spareTailId);
+      }
     } else if (action.type === "HOLD_CONNECTION") {
       holdByFlightId.set(action.flightId, action);
     }
@@ -282,7 +294,7 @@ export function simulateNetwork(
           }
         }
 
-        // 4. Connection hold recovery action (cross-tail safe via fixed-point loop)
+        // 4. Connection hold recovery action (cross-tail safe via fixed-point loop, strictly capped at <= 45m)
         const holdAction = holdByFlightId.get(f.flight_id);
         if (holdAction) {
           const cx = CONNECTIONS_BY_ID.get(holdAction.connectionId);
@@ -294,8 +306,10 @@ export function simulateNetwork(
             inboundFlight.status !== "CREW_BREACH"
           ) {
             const neededDep = inboundFlight.actualArrMin + cx.min_connect_minutes;
-            if (neededDep > readyDep) {
-              readyDep = neededDep;
+            const maxHold = Math.min(45, Math.max(0, holdAction.holdMinutes));
+            const cappedNeededDep = Math.min(neededDep, readyDep + maxHold);
+            if (cappedNeededDep > readyDep) {
+              readyDep = cappedNeededDep;
               primaryReason = "CONNECTION_HOLD";
               causeFlightId = inboundFlight.flight_id;
               rootCauseAirportId = inboundFlight.rootCauseAirportId;

@@ -111,11 +111,11 @@ export function TailChainGantt({
   return (
     <section
       aria-label="Tail chains, passenger connections, and crew duty timelines"
-      className={`flex w-full shrink-0 flex-col border-t border-[#E2E8F0] bg-[#FFFFFF] transition-[height] duration-200 ${
+      className={`flex w-full shrink-0 flex-col border-t border-[#E6EBF2] bg-[#FFFFFF] transition-[height] duration-200 ${
         expanded ? "h-56" : "h-10"
       }`}
     >
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#E2E8F0] px-3">
+      <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#E6EBF2] px-3">
         <div className="flex items-center gap-1.5" role="tablist">
           <TabButton
             active={activeTab === "tails"}
@@ -156,7 +156,7 @@ export function TailChainGantt({
             type="button"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
-            className="flex h-7 cursor-pointer items-center gap-1 rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-2 text-xs font-medium text-[#0F172A] hover:bg-[#F1F5F9]"
+            className="flex h-7 cursor-pointer items-center gap-1 rounded-md border border-[#E6EBF2] bg-[#FBFCFD] px-2 text-xs font-medium text-[#0F172A] hover:bg-[#F1F5F9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
           >
             <span>{expanded ? "Collapse" : "Expand Gantt"}</span>
             {expanded ? (
@@ -169,9 +169,9 @@ export function TailChainGantt({
       </div>
 
       {expanded && activeTab === "tails" && (
-        <div className="flex-1 overflow-y-auto overflow-x-hidden bg-[#F8FAFC]">
-          <div className="sticky top-0 z-10 flex h-6 border-b border-[#E2E8F0] bg-[#FFFFFF]">
-            <div className="w-28 shrink-0 border-r border-[#E2E8F0] px-2 font-mono text-[10px] font-semibold leading-6 text-[#475569]">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden bg-[#FBFCFD]">
+          <div className="sticky top-0 z-10 flex h-6 border-b border-[#E6EBF2] bg-[#FFFFFF]">
+            <div className="w-28 shrink-0 border-r border-[#E6EBF2] px-2 font-mono text-[10px] font-semibold leading-6 text-[#475569]">
               Tail / Crew
             </div>
             <div
@@ -182,20 +182,20 @@ export function TailChainGantt({
               {HOUR_TICKS.map((hr) => (
                 <div
                   key={hr}
-                  className="absolute top-0 bottom-0 border-l border-[#E2E8F0] pl-1 font-mono text-[10px] leading-6 text-[#475569]"
+                  className="absolute top-0 bottom-0 border-l border-[#E6EBF2] pl-1 font-mono text-[10px] leading-6 text-[#475569]"
                   style={{ left: `${pct(hr * 60)}%` }}
                 >
                   {String(hr).padStart(2, "0")}:00
                 </div>
               ))}
               <div
-                className="pointer-events-none absolute top-0 bottom-0 w-0.5 bg-[#2563EB]"
+                className="pointer-events-none absolute top-0 bottom-0 w-0.5 bg-[#2B79FB]"
                 style={{ left: `${pct(clockMin)}%` }}
               />
             </div>
           </div>
 
-          <div className="divide-y divide-[#E2E8F0]">
+          <div className="divide-y divide-[#E6EBF2]">
             {tailRows.map(({ tailId, legs, crew, hasBreach, maxDelay }) => {
               const isSelectedTail = tailId === selectedTailId;
               return (
@@ -205,11 +205,11 @@ export function TailChainGantt({
                     isSelectedTail ? "bg-[#EFF6FF]" : "bg-[#FFFFFF]"
                   }`}
                 >
-                  <div className="flex h-full w-28 shrink-0 items-center justify-between border-r border-[#E2E8F0] px-2 font-mono text-[11px]">
+                  <div className="flex h-full w-28 shrink-0 items-center justify-between border-r border-[#E6EBF2] px-2 font-mono text-[11px]">
                     <span
                       className={`font-semibold ${
                         hasBreach
-                          ? "text-[#DC2626]"
+                          ? "text-[#B91C1C]"
                           : maxDelay > 0
                             ? "text-[#B45309]"
                             : "text-[#0F172A]"
@@ -238,7 +238,7 @@ export function TailChainGantt({
                     />
 
                     <div
-                      className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-[#2563EB]/75"
+                      className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-[#2B79FB]/75"
                       style={{ left: `${pct(clockMin)}%` }}
                     />
 
@@ -256,13 +256,13 @@ export function TailChainGantt({
                       const isSel = leg.flight_id === selectedFlightId;
 
                       let barClass =
-                        "border-[#2563EB]/40 bg-[#EFF6FF] text-[#1D4ED8]";
+                        "border-[#2B79FB]/40 bg-[#EFF6FF] text-[#1D4ED8]";
                       if (leg.status === "DELAYED") {
                         barClass =
                           "gantt-delay-hatch border-[#D97706] bg-[#FEF3C7] text-[#B45309]";
                       } else if (leg.status === "CREW_BREACH") {
                         barClass =
-                          "gantt-breach-stripe border-[#DC2626] text-[#DC2626]";
+                          "gantt-breach-stripe border-[#B91C1C] text-[#B91C1C]";
                       } else if (leg.status === "CANCELLED") {
                         barClass =
                           "border-dashed border-[#94A3B8] bg-[#F1F5F9] text-[#475569]";
@@ -284,8 +284,8 @@ export function TailChainGantt({
                             type="button"
                             onClick={() => onSelectFlight(leg.flight_id)}
                             title={`${leg.flight_id} (${leg.origin}->${leg.destination}) ${formatHHMM(leg.actualDepMin)}–${formatHHMM(leg.actualArrMin)}`}
-                            className={`absolute top-[3px] bottom-[3px] flex cursor-pointer items-center justify-between overflow-hidden rounded-sm border px-1 font-mono text-[9.5px] font-semibold transition-colors duration-150 ${barClass} ${
-                              isSel ? "ring-2 ring-[#2563EB]" : ""
+                            className={`absolute top-[3px] bottom-[3px] flex cursor-pointer items-center justify-between overflow-hidden rounded-sm border px-1 font-mono text-[9.5px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB] ${barClass} ${
+                              isSel ? "ring-2 ring-[#2B79FB]" : ""
                             }`}
                             style={{
                               left: `${actLeft}%`,
@@ -301,7 +301,7 @@ export function TailChainGantt({
                                 aria-hidden="true"
                               />
                             ) : leg.bufferAbsorbedMin > 0 && leg.delayMin === 0 ? (
-                              <span className="ml-0.5 shrink-0 text-[8.5px] text-[#059669]">
+                              <span className="ml-0.5 shrink-0 text-[8.5px] text-[#047857]">
                                 ABS
                               </span>
                             ) : leg.delayMin > 0 ? (
@@ -324,8 +324,8 @@ export function TailChainGantt({
       {expanded && activeTab === "connections" && (
         <div className="flex-1 overflow-y-auto bg-[#FFFFFF]">
           <table className="w-full border-collapse text-left text-xs">
-            <thead className="sticky top-0 bg-[#F8FAFC] font-mono text-[10px] text-[#475569]">
-              <tr className="border-b border-[#E2E8F0]">
+            <thead className="sticky top-0 bg-[#FBFCFD] font-mono text-[10px] text-[#475569]">
+              <tr className="border-b border-[#E6EBF2]">
                 <th className="px-3 py-1.5">ID</th>
                 <th className="px-3 py-1.5">Hub</th>
                 <th className="px-3 py-1.5">Transfer</th>
@@ -335,12 +335,12 @@ export function TailChainGantt({
                 <th className="px-3 py-1.5">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#F1F5F9]">
+            <tbody className="divide-y divide-[#E6EBF2]">
               {sortedConnections.map((cx) => (
                 <tr
                   key={cx.connection_id}
                   onClick={() => onSelectFlight(cx.from_flight)}
-                  className="cursor-pointer hover:bg-[#F8FAFC]"
+                  className="cursor-pointer hover:bg-[#FBFCFD]"
                 >
                   <td className="px-3 py-1.5 font-mono font-semibold text-[#0F172A]">
                     {cx.connection_id}
@@ -364,11 +364,11 @@ export function TailChainGantt({
                   </td>
                   <td className="px-3 py-1.5 font-mono text-[11px] font-semibold">
                     {cx.status === "INTACT" ? (
-                      <span className="text-[#059669]">INTACT</span>
+                      <span className="text-[#047857]">INTACT</span>
                     ) : cx.status === "BROKEN_GROUNDED" ? (
-                      <span className="text-[#DC2626]">GROUNDED</span>
+                      <span className="text-[#B91C1C]">GROUNDED</span>
                     ) : (
-                      <span className="text-[#DC2626]">
+                      <span className="text-[#B91C1C]">
                         MISSED (-{cx.shortfallMin}m)
                       </span>
                     )}
@@ -383,8 +383,8 @@ export function TailChainGantt({
       {expanded && activeTab === "crews" && (
         <div className="flex-1 overflow-y-auto bg-[#FFFFFF]">
           <table className="w-full border-collapse text-left text-xs">
-            <thead className="sticky top-0 bg-[#F8FAFC] font-mono text-[10px] text-[#475569]">
-              <tr className="border-b border-[#E2E8F0]">
+            <thead className="sticky top-0 bg-[#FBFCFD] font-mono text-[10px] text-[#475569]">
+              <tr className="border-b border-[#E6EBF2]">
                 <th className="px-3 py-1.5">Crew</th>
                 <th className="px-3 py-1.5">Tail</th>
                 <th className="px-3 py-1.5">Base</th>
@@ -394,14 +394,14 @@ export function TailChainGantt({
                 <th className="px-3 py-1.5">Legality</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#F1F5F9]">
+            <tbody className="divide-y divide-[#E6EBF2]">
               {sortedCrews.map((cr) => (
                 <tr
                   key={cr.crewId}
                   onClick={() => {
                     if (cr.breachFlightId) onSelectFlight(cr.breachFlightId);
                   }}
-                  className="cursor-pointer hover:bg-[#F8FAFC]"
+                  className="cursor-pointer hover:bg-[#FBFCFD]"
                 >
                   <td className="px-3 py-1.5 font-mono font-semibold text-[#0F172A]">
                     {cr.crewId}
@@ -423,12 +423,12 @@ export function TailChainGantt({
                   </td>
                   <td className="px-3 py-1.5 font-mono text-[11px] font-semibold">
                     {cr.breached ? (
-                      <span className="inline-flex items-center gap-1 text-[#DC2626]">
+                      <span className="inline-flex items-center gap-1 text-[#B91C1C]">
                         <AlertTriangle className="h-3 w-3" aria-hidden="true" />
                         BREACH +{cr.overtimeMin}m ({cr.breachFlightId})
                       </span>
                     ) : (
-                      <span className="text-[#059669]">LEGAL</span>
+                      <span className="text-[#047857]">LEGAL</span>
                     )}
                   </td>
                 </tr>
@@ -460,11 +460,11 @@ function TabButton({
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={`flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors duration-150 ${
+      className={`flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB] ${
         active
-          ? "border-[#2563EB] bg-[#EFF6FF] text-[#2563EB]"
+          ? "border-[#1D4ED8] bg-[#EFF6FF] text-[#1D4ED8]"
           : alert
-            ? "border-[#FECACA] bg-[#FEF2F2] text-[#DC2626]"
+            ? "border-[#FECACA] bg-[#FEF2F2] text-[#B91C1C]"
             : "border-transparent text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A]"
       }`}
     >

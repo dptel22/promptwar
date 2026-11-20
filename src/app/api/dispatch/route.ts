@@ -3,7 +3,7 @@ import { generateText, Output } from "ai";
 import { google } from "@ai-sdk/google";
 import { z } from "zod";
 import { predictCascadeRisk } from "@/lib/ml/predict";
-import { formatHHMM } from "@/lib/sim/engine";
+import { DATASET, formatHHMM } from "@/lib/sim/engine";
 import {
   buildDeterministicBriefing,
   evaluateRecoveryCandidates,
@@ -11,35 +11,39 @@ import {
 import type { RecoveryAction } from "@/lib/sim/types";
 import { verifyAiBriefing } from "@/lib/sim/verify-ai";
 
-const ClosureSchema = z.object({
-  id: z.string(),
-  airportId: z.string().length(3),
-  startMin: z.number().int().min(300).max(1380),
-  endMin: z.number().int().min(301).max(1380),
-  label: z.string().optional(),
-});
+const VALID_IATA = DATASET.airports.map((a) => a.id) as [string, ...string[]];
+
+const ClosureSchema = z
+  .object({
+    id: z.string().min(1).max(80),
+    airportId: z.enum(VALID_IATA),
+    startMin: z.number().int().min(300).max(1379),
+    endMin: z.number().int().min(301).max(1380),
+    label: z.string().max(80).optional(),
+  })
+  .refine((c) => c.endMin > c.startMin, "endMin must exceed startMin");
 
 const RecoveryActionSchema = z.discriminatedUnion("type", [
   z.object({
-    id: z.string(),
+    id: z.string().min(1).max(80),
     type: z.literal("SWAP_SPARE"),
-    spareTailId: z.string(),
-    targetFlightId: z.string(),
-    label: z.string(),
+    spareTailId: z.string().min(1).max(80),
+    targetFlightId: z.string().min(1).max(80),
+    label: z.string().min(1).max(80),
   }),
   z.object({
-    id: z.string(),
+    id: z.string().min(1).max(80),
     type: z.literal("CANCEL_FLIGHT"),
-    flightIds: z.array(z.string()),
-    label: z.string(),
+    flightIds: z.array(z.string().min(1).max(20)).min(1).max(4),
+    label: z.string().min(1).max(80),
   }),
   z.object({
-    id: z.string(),
+    id: z.string().min(1).max(80),
     type: z.literal("HOLD_CONNECTION"),
-    connectionId: z.string(),
-    flightId: z.string(),
+    connectionId: z.string().min(1).max(80),
+    flightId: z.string().min(1).max(80),
     holdMinutes: z.number().int().min(1).max(45),
-    label: z.string(),
+    label: z.string().min(1).max(80),
   }),
 ]);
 
@@ -76,7 +80,16 @@ function resolveModel() {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON payload" },
+        { status: 400 }
+      );
+    }
+
     const parsed = DispatchRequestSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(

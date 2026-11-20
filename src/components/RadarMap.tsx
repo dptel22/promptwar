@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { CloudLightning, Minus, Plus, RotateCcw, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, CloudLightning, Minus, Plus, RotateCcw, X } from "lucide-react";
 import {
   AIRPORT_LABEL_OFFSETS,
   MAP_VIEWBOX,
@@ -32,6 +32,7 @@ interface RadarMapProps {
   showFragilityOverlay: boolean;
   airportFragilities: AirportFragilityRank[];
   focusAirportSignal?: { airportId: string; nonce: number } | null;
+  topLeftOverlay?: React.ReactNode;
   onSelectFlight: (flightId: string) => void;
   onSelectAirport: (airportId: string | null) => void;
   onDropStormOnAirport: (airportId: string) => void;
@@ -56,6 +57,28 @@ const UNIQUE_ROUTES: Array<{ key: string; from: string; to: string }> = (() => {
 
 const FOCUS_HUBS = ["BOM", "DEL", "BLR", "HYD"] as const;
 
+function clampCamera(scale: number, tx: number, ty: number) {
+  const clampedScale = Math.max(0.95, Math.min(4.5, scale));
+  const maxTx = MAP_VIEWBOX.width * clampedScale * 0.55;
+  const maxTy = MAP_VIEWBOX.height * clampedScale * 0.55;
+  return {
+    scale: Math.round(clampedScale * 100) / 100,
+    tx: Math.round(Math.max(-maxTx, Math.min(maxTx, tx)) * 10) / 10,
+    ty: Math.round(Math.max(-maxTy, Math.min(maxTy, ty)) * 10) / 10,
+  };
+}
+
+function handleSvgKeyActivate(
+  e: React.KeyboardEvent,
+  callback: () => void
+) {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    e.stopPropagation();
+    callback();
+  }
+}
+
 export function RadarMap({
   simulation,
   previewCandidate,
@@ -66,6 +89,7 @@ export function RadarMap({
   showFragilityOverlay,
   airportFragilities,
   focusAirportSignal,
+  topLeftOverlay,
   onSelectFlight,
   onSelectAirport,
   onDropStormOnAirport,
@@ -92,15 +116,25 @@ export function RadarMap({
   function focusOnAirport(airportId: string, targetScale = 2.6) {
     const pt = AIRPORT_POINTS.get(airportId);
     if (!pt) return;
-    setCamera({
-      scale: targetScale,
-      tx: (cx - pt.x) * targetScale,
-      ty: (cy - pt.y) * targetScale,
-    });
+    setCamera(
+      clampCamera(
+        targetScale,
+        (cx - pt.x) * targetScale,
+        (cy - pt.y) * targetScale
+      )
+    );
   }
 
   function resetCamera() {
     setCamera({ scale: 1.04, tx: 0, ty: 0 });
+  }
+
+  function zoomBy(multiplier: number) {
+    setCamera((prev) => {
+      const nextScale = Math.max(0.95, Math.min(4.5, prev.scale * multiplier));
+      const ratio = nextScale / prev.scale;
+      return clampCamera(nextScale, prev.tx * ratio, prev.ty * ratio);
+    });
   }
 
   useEffect(() => {
@@ -110,40 +144,75 @@ export function RadarMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusAirportSignal]);
 
-  // Smooth non-passive wheel zoom centered on cursor
+  // Cursor-centered non-passive wheel zoom mapped cleanly through preserveAspectRatio="xMidYMid meet"
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0) return;
       e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const scaleFactor =
+        Math.min(rect.width / MAP_VIEWBOX.width, rect.height / MAP_VIEWBOX.height) ||
+        1;
+      const offsetX = (rect.width - MAP_VIEWBOX.width * scaleFactor) / 2;
+      const offsetY = (rect.height - MAP_VIEWBOX.height * scaleFactor) / 2;
+      const vx = (e.clientX - rect.left - offsetX) / scaleFactor;
+      const vy = (e.clientY - rect.top - offsetY) / scaleFactor;
       const factor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+
       setCamera((prev) => {
         const nextScale = Math.max(0.95, Math.min(4.5, prev.scale * factor));
         const ratio = nextScale / prev.scale;
-        return {
-          scale: Math.round(nextScale * 100) / 100,
-          tx: Math.round(prev.tx * ratio * 10) / 10,
-          ty: Math.round(prev.ty * ratio * 10) / 10,
-        };
+        const nextTx = vx - cx - ratio * (vx - cx - prev.tx);
+        const nextTy = vy - cy - ratio * (vy - cy - prev.ty);
+        return clampCamera(nextScale, nextTx, nextTy);
       });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [cx, cy]);
 
-  const invScale = 1 / Math.pow(camera.scale, 0.72);
+  const invScale = Math.round((1 / Math.pow(camera.scale, 0.72)) * 1000) / 1000;
   const selectedFlight = selectedFlightId
     ? simulation.flightsById[selectedFlightId]
     : undefined;
   const selectedTailId = selectedFlight?.tail_id ?? null;
 
-  const closuresByAirport = new Map<string, AirportClosure>();
-  for (const c of simulation.closures) {
-    closuresByAirport.set(c.airportId, c);
-  }
-  const fragilityByAirport = new Map(
-    airportFragilities.map((f) => [f.airportId, f])
+  const closuresByAirport = useMemo(() => {
+    const map = new Map<string, AirportClosure>();
+    for (const c of simulation.closures) {
+      map.set(c.airportId, c);
+    }
+    return map;
+  }, [simulation.closures]);
+
+  const fragilityByAirport = useMemo(
+    () => new Map(airportFragilities.map((f) => [f.airportId, f])),
+    [airportFragilities]
   );
+
+  // Precompute airport delay/breach flags once per simulation update
+  const airportStatusMap = useMemo(() => {
+    const map = new Map<string, { hasBreach: boolean; hasDelay: boolean }>();
+    for (const a of DATASET.airports) {
+      map.set(a.id, { hasBreach: false, hasDelay: false });
+    }
+    for (const f of simulation.flights) {
+      if (f.status === "CREW_BREACH") {
+        const o = map.get(f.origin);
+        if (o) o.hasBreach = true;
+        const d = map.get(f.destination);
+        if (d) d.hasBreach = true;
+      } else if (f.status === "DELAYED") {
+        const o = map.get(f.origin);
+        if (o) o.hasDelay = true;
+        const d = map.get(f.destination);
+        if (d) d.hasDelay = true;
+      }
+    }
+    return map;
+  }, [simulation.flights]);
 
   // Airborne, holding, and ground-held flights
   const holdingBuckets = new Map<string, SimulatedFlight[]>();
@@ -219,7 +288,7 @@ export function RadarMap({
   return (
     <div
       ref={containerRef}
-      className={`relative h-full w-full select-none overflow-hidden bg-[#EEF2F6] ${
+      className={`relative h-full w-full select-none overflow-hidden bg-[radial-gradient(circle_at_50%_46%,#F2F6FC_0%,#FBFCFD_68%)] ${
         isPanning ? "cursor-grabbing" : "cursor-grab"
       }`}
       onPointerDown={(e) => {
@@ -243,11 +312,18 @@ export function RadarMap({
         const dx = e.clientX - d.startX;
         const dy = e.clientY - d.startY;
         if (Math.hypot(dx, dy) > 4) d.moved = true;
-        setCamera((prev) => ({
-          ...prev,
-          tx: Math.round((d.origTx + dx * 1.15) * 10) / 10,
-          ty: Math.round((d.origTy + dy * 1.15) * 10) / 10,
-        }));
+        const rect = containerRef.current?.getBoundingClientRect();
+        const scaleFactor = rect
+          ? Math.min(rect.width / MAP_VIEWBOX.width, rect.height / MAP_VIEWBOX.height) ||
+            1
+          : 1;
+        setCamera((prev) =>
+          clampCamera(
+            prev.scale,
+            d.origTx + dx / scaleFactor,
+            d.origTy + dy / scaleFactor
+          )
+        );
       }}
       onPointerUp={() => {
         if (dragRef.current && !dragRef.current.moved) {
@@ -265,56 +341,79 @@ export function RadarMap({
       }}
       onDrop={() => setDragOverAirport(null)}
     >
-      {/* Top-Left Clean Route Filter Radio (Inspired by Images 1-2) */}
-      <div className="absolute left-3 top-3 z-10 flex flex-col gap-1.5 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] px-3 py-2 shadow-sm">
-        <button
-          type="button"
-          onClick={() => setRouteFilter("cascade")}
-          className={`flex cursor-pointer items-center gap-2 text-xs font-medium transition-colors duration-150 ${
-            routeFilter === "cascade"
-              ? "font-semibold text-[#2563EB]"
-              : "text-[#475569] hover:text-[#0F172A]"
-          }`}
+      {/* Top-Left Borderless Route Toggles + Floating Flight Stats Overlay */}
+      <div className="pointer-events-none absolute left-4 top-3.5 z-10 flex flex-col items-start gap-3">
+        <div
+          data-interactive="true"
+          className="pointer-events-auto flex flex-col gap-1.5"
         >
-          <span
-            className={`h-3 w-3 rounded-full border ${
+          <button
+            type="button"
+            aria-pressed={routeFilter === "cascade"}
+            onClick={() => setRouteFilter("cascade")}
+            className={`flex cursor-pointer items-center gap-2 rounded-sm text-xs tracking-wide transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB] ${
               routeFilter === "cascade"
-                ? "border-[#2563EB] bg-[#2563EB]"
-                : "border-[#94A3B8]"
+                ? "font-semibold text-[#1D4ED8]"
+                : "font-medium text-[#475569] hover:text-[#0F172A]"
             }`}
-          />
-          Active Cascade
-        </button>
-        <button
-          type="button"
-          onClick={() => setRouteFilter("all")}
-          className={`flex cursor-pointer items-center gap-2 text-xs font-medium transition-colors duration-150 ${
-            routeFilter === "all"
-              ? "font-semibold text-[#2563EB]"
-              : "text-[#475569] hover:text-[#0F172A]"
-          }`}
-        >
-          <span
-            className={`h-3 w-3 rounded-full border ${
+          >
+            <span
+              className={`flex h-3.5 w-3.5 items-center justify-center rounded-full ${
+                routeFilter === "cascade"
+                  ? "bg-[#2B79FB]"
+                  : "border border-[#CBD5E1] bg-[#FFFFFF]"
+              }`}
+              aria-hidden="true"
+            >
+              {routeFilter === "cascade" && (
+                <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />
+              )}
+            </span>
+            Active Cascade
+          </button>
+          <button
+            type="button"
+            aria-pressed={routeFilter === "all"}
+            onClick={() => setRouteFilter("all")}
+            className={`flex cursor-pointer items-center gap-2 rounded-sm text-xs tracking-wide transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB] ${
               routeFilter === "all"
-                ? "border-[#2563EB] bg-[#2563EB]"
-                : "border-[#94A3B8]"
+                ? "font-semibold text-[#1D4ED8]"
+                : "font-medium text-[#475569] hover:text-[#0F172A]"
             }`}
-          />
-          All 70 Flights
-        </button>
+          >
+            <span
+              className={`flex h-3.5 w-3.5 items-center justify-center rounded-full ${
+                routeFilter === "all"
+                  ? "bg-[#2B79FB]"
+                  : "border border-[#CBD5E1] bg-[#FFFFFF]"
+              }`}
+              aria-hidden="true"
+            >
+              {routeFilter === "all" && (
+                <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />
+              )}
+            </span>
+            All 70 Flights
+          </button>
+        </div>
+
+        {topLeftOverlay && (
+          <div data-interactive="true" className="pointer-events-auto">
+            {topLeftOverlay}
+          </div>
+        )}
       </div>
 
-      {/* Top-Right Crisp Pan/Zoom & Hub Focus Controls (Inspired by Image 2) */}
-      <div className="absolute right-3 top-3 z-10 flex items-start gap-2">
-        <div className="hidden items-center gap-1 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] p-1 shadow-sm sm:flex">
+      {/* Top-Right Understated Hub Focus Pills & Dribbble Rounded Vertical + / - Pill */}
+      <div className="absolute right-3.5 top-3.5 z-10 flex items-start gap-2">
+        <div className="hidden items-center gap-0.5 rounded-full border border-[#E6EBF2] bg-[#FFFFFF] px-1.5 py-1 shadow-[0_2px_10px_rgba(148,163,184,0.12)] sm:flex">
           <button
             type="button"
             onClick={resetCamera}
-            className={`cursor-pointer rounded-md px-2 py-1 font-mono text-[11px] font-medium transition-colors duration-150 ${
+            className={`cursor-pointer rounded-full px-2.5 py-0.5 font-mono text-[11px] font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB] ${
               camera.scale <= 1.2
-                ? "bg-[#EFF6FF] font-semibold text-[#2563EB]"
-                : "text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A]"
+                ? "bg-[#EFF6FF] font-semibold text-[#1D4ED8]"
+                : "text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
             }`}
           >
             India
@@ -324,46 +423,38 @@ export function RadarMap({
               key={hub}
               type="button"
               onClick={() => focusOnAirport(hub, 2.6)}
-              className="cursor-pointer rounded-md px-2 py-1 font-mono text-[11px] font-medium text-[#475569] transition-colors duration-150 hover:bg-[#F1F5F9] hover:text-[#0F172A]"
+              className="cursor-pointer rounded-full px-2.5 py-0.5 font-mono text-[11px] font-medium text-[#475569] transition-colors duration-150 hover:bg-[#F8FAFC] hover:text-[#0F172A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
             >
               {hub}
             </button>
           ))}
         </div>
 
-        <div className="flex flex-col overflow-hidden rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] shadow-sm">
-          <button
-            type="button"
-            onClick={() =>
-              setCamera((c) => ({
-                ...c,
-                scale: Math.min(4.5, Math.round(c.scale * 1.3 * 100) / 100),
-              }))
-            }
-            aria-label="Zoom in radar map"
-            className="flex h-8 w-8 cursor-pointer items-center justify-center border-b border-[#E2E8F0] text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
-          >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              setCamera((c) => ({
-                ...c,
-                scale: Math.max(0.95, Math.round((c.scale / 1.3) * 100) / 100),
-              }))
-            }
-            aria-label="Zoom out radar map"
-            className="flex h-8 w-8 cursor-pointer items-center justify-center border-b border-[#E2E8F0] text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
-          >
-            <Minus className="h-4 w-4" aria-hidden="true" />
-          </button>
+        <div className="flex flex-col items-center">
+          <div className="flex w-8 flex-col overflow-hidden rounded-full border border-[#E6EBF2] bg-[#FFFFFF] shadow-[0_2px_10px_rgba(148,163,184,0.14)]">
+            <button
+              type="button"
+              onClick={() => zoomBy(1.3)}
+              aria-label="Zoom in radar map"
+              className="flex h-8 w-8 cursor-pointer items-center justify-center border-b border-[#E6EBF2] text-[#475569] transition-colors duration-150 hover:bg-[#F8FAFC] hover:text-[#0F172A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => zoomBy(1 / 1.3)}
+              aria-label="Zoom out radar map"
+              className="flex h-8 w-8 cursor-pointer items-center justify-center text-[#475569] transition-colors duration-150 hover:bg-[#F8FAFC] hover:text-[#0F172A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
+            >
+              <Minus className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
           <button
             type="button"
             onClick={resetCamera}
             aria-label="Reset map pan and zoom"
             title="Fit India"
-            className="flex h-8 w-8 cursor-pointer items-center justify-center text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+            className="mt-1.5 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-[#E6EBF2] bg-[#FFFFFF] text-[#475569] shadow-[0_2px_10px_rgba(148,163,184,0.14)] transition-colors duration-150 hover:bg-[#F8FAFC] hover:text-[#0F172A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
           >
             <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
@@ -372,7 +463,7 @@ export function RadarMap({
 
       {/* Storm Drag Hint */}
       {isStormDragging && (
-        <div className="pointer-events-none absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-md border border-[#DC2626] bg-[#FFFFFF] px-3 py-1.5 text-xs font-semibold text-[#DC2626] shadow-md">
+        <div className="pointer-events-none absolute left-1/2 top-3.5 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[#DC2626] bg-[#FFFFFF] px-3.5 py-1.5 text-xs font-semibold text-[#B91C1C] shadow-md">
           <CloudLightning className="h-3.5 w-3.5" aria-hidden="true" />
           Drop storm onto any airport beacon
         </div>
@@ -390,7 +481,7 @@ export function RadarMap({
         >
           <IndiaReliefLayer scaleFactor={invScale} />
 
-          {/* Network Route Web */}
+          {/* Static Network Route Web (#9EAFD8) */}
           <g aria-hidden="true">
             {UNIQUE_ROUTES.map(({ key, from, to }) => {
               const fromPt = AIRPORT_POINTS.get(from);
@@ -401,15 +492,17 @@ export function RadarMap({
                   key={key}
                   d={buildArcPath(fromPt, toPt)}
                   fill="none"
-                  stroke="#CBD5E1"
-                  strokeOpacity={selectedTailId ? 0.25 : routeFilter === "all" ? 0.85 : 0.4}
+                  stroke="#9EAFD8"
+                  strokeOpacity={
+                    selectedTailId ? 0.22 : routeFilter === "all" ? 0.65 : 0.28
+                  }
                   strokeWidth={1.0 * invScale}
                 />
               );
             })}
           </g>
 
-          {/* Disrupted or Airborne Arcs */}
+          {/* Active & Disrupted Arcs */}
           <g aria-hidden="true">
             {simulation.flights.map((f) => {
               const showRoute =
@@ -427,14 +520,14 @@ export function RadarMap({
                     ? "#94A3B8"
                     : f.status === "DELAYED"
                       ? "#D97706"
-                      : "#2563EB";
+                      : "#2B79FB";
               const opacity = selectedTailId
                 ? isSelectedTail
                   ? 0.9
                   : 0.1
                 : f.status !== "ON_TIME"
-                  ? 0.65
-                  : 0.3;
+                  ? 0.7
+                  : 0.42;
 
               return (
                 <path
@@ -443,7 +536,7 @@ export function RadarMap({
                   fill="none"
                   stroke={stroke}
                   strokeOpacity={opacity}
-                  strokeWidth={(f.status !== "ON_TIME" ? 1.8 : 1.15) * invScale}
+                  strokeWidth={(f.status !== "ON_TIME" ? 1.8 : 1.2) * invScale}
                 />
               );
             })}
@@ -473,7 +566,7 @@ export function RadarMap({
                     <path
                       d={pathD}
                       fill="none"
-                      stroke={isCancelled ? "#DC2626" : "#059669"}
+                      stroke={isCancelled ? "#DC2626" : "#047857"}
                       strokeWidth={2.6 * invScale}
                     />
                     <g
@@ -486,7 +579,7 @@ export function RadarMap({
                         height={18}
                         rx={4}
                         fill="#FFFFFF"
-                        stroke={isCancelled ? "#DC2626" : "#059669"}
+                        stroke={isCancelled ? "#DC2626" : "#047857"}
                         strokeWidth={1.2}
                       />
                       <text
@@ -496,7 +589,7 @@ export function RadarMap({
                         fontSize="9"
                         fontFamily="var(--font-mono)"
                         fontWeight="700"
-                        fill={isCancelled ? "#DC2626" : "#059669"}
+                        fill={isCancelled ? "#B91C1C" : "#047857"}
                       >
                         {isCancelled
                           ? "CANCEL"
@@ -513,7 +606,7 @@ export function RadarMap({
             </g>
           )}
 
-          {/* Selected Tail Multi-Hop Domino Focus (Images 1-2 Style) */}
+          {/* Selected Tail Multi-Hop Domino Focus */}
           {selectedTailFlights.length > 0 && (
             <g aria-label={`Selected domino chain for ${selectedTailId}`}>
               {selectedTailFlights.map((f) => {
@@ -527,7 +620,7 @@ export function RadarMap({
                       ? "#94A3B8"
                       : f.status === "DELAYED"
                         ? "#D97706"
-                        : "#2563EB";
+                        : "#2B79FB";
                 return (
                   <g key={`chain-${f.flight_id}`}>
                     <path
@@ -546,12 +639,18 @@ export function RadarMap({
                     />
                     <g
                       data-interactive="true"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Select leg ${f.leg_order} flight ${f.flight_id} (${f.origin} to ${f.destination})`}
                       transform={`translate(${mid.x}, ${mid.y}) scale(${invScale})`}
-                      className="cursor-pointer"
+                      className="cursor-pointer focus:outline-none"
                       onClick={(e) => {
                         e.stopPropagation();
                         onSelectFlight(f.flight_id);
                       }}
+                      onKeyDown={(e) =>
+                        handleSvgKeyActivate(e, () => onSelectFlight(f.flight_id))
+                      }
                     >
                       <circle
                         r={10}
@@ -626,18 +725,26 @@ export function RadarMap({
                     fontSize="9.5"
                     fontFamily="var(--font-mono)"
                     fontWeight="700"
-                    fill="#DC2626"
+                    fill="#B91C1C"
                   >
                     {closure.airportId} {formatHHMM(closure.startMin)}–
                     {formatHHMM(closure.endMin)}
                   </text>
                   <g
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Remove storm closure at ${closure.airportId}`}
                     transform="translate(114, -1)"
-                    className="cursor-pointer"
+                    className="cursor-pointer focus:outline-none"
                     onClick={(e) => {
                       e.stopPropagation();
                       onRemoveClosure(closure.airportId);
                     }}
+                    onKeyDown={(e) =>
+                      handleSvgKeyActivate(e, () =>
+                        onRemoveClosure(closure.airportId)
+                      )
+                    }
                   >
                     <circle r={6.5} fill="#FEE2E2" />
                     <text
@@ -646,7 +753,7 @@ export function RadarMap({
                       textAnchor="middle"
                       fontSize="9.5"
                       fontWeight="700"
-                      fill="#DC2626"
+                      fill="#B91C1C"
                       fontFamily="var(--font-mono)"
                     >
                       ×
@@ -685,21 +792,64 @@ export function RadarMap({
             );
           })}
 
-          {/* ATC Holding Racetrack Rings */}
-          {Array.from(holdingBuckets.keys()).map((airportId) => {
+          {/* ATC Holding Racetrack Rings & De-cluttered Zoom-Aware Summary Pills */}
+          {Array.from(holdingBuckets.entries()).map(([airportId, holdingList]) => {
             const center = AIRPORT_POINTS.get(airportId)!;
             return (
-              <ellipse
-                key={`orbit-${airportId}`}
-                cx={center.x}
-                cy={center.y}
-                rx={28 * invScale}
-                ry={16 * invScale}
-                fill="none"
-                stroke="#D97706"
-                strokeWidth={1.3 * invScale}
-                strokeDasharray={`${3 * invScale} ${3 * invScale}`}
-              />
+              <g key={`orbit-${airportId}`}>
+                <ellipse
+                  cx={center.x}
+                  cy={center.y}
+                  rx={28 * invScale}
+                  ry={16 * invScale}
+                  fill="none"
+                  stroke="#D97706"
+                  strokeWidth={1.3 * invScale}
+                  strokeDasharray={`${3 * invScale} ${3 * invScale}`}
+                />
+
+                {camera.scale < 1.6 && holdingList.length > 0 && (
+                  <g
+                    data-interactive="true"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${holdingList.length} flights holding at ${airportId}. Zoom in to inspect.`}
+                    transform={`translate(${center.x - 54 * invScale}, ${center.y + 28 * invScale}) scale(${invScale})`}
+                    className="cursor-pointer focus:outline-none"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      focusOnAirport(airportId, 2.4);
+                    }}
+                    onKeyDown={(e) =>
+                      handleSvgKeyActivate(e, () =>
+                        focusOnAirport(airportId, 2.4)
+                      )
+                    }
+                  >
+                    <rect
+                      x={-34}
+                      y={-9}
+                      width={74}
+                      height={18}
+                      rx={9}
+                      fill="#FEE2E2"
+                      stroke="#DC2626"
+                      strokeWidth={1.1}
+                    />
+                    <text
+                      x={3}
+                      y={3}
+                      textAnchor="middle"
+                      fontSize="8.5"
+                      fontFamily="var(--font-mono)"
+                      fontWeight="700"
+                      fill="#B91C1C"
+                    >
+                      {holdingList.length} HOLDING
+                    </text>
+                  </g>
+                )}
+              </g>
             );
           })}
 
@@ -716,18 +866,16 @@ export function RadarMap({
             const isDragHover = dragOverAirport === airport.id;
             const frag = fragilityByAirport.get(airport.id);
 
-            const touching = simulation.flights.filter(
-              (f) => f.origin === airport.id || f.destination === airport.id
-            );
-            const hasBreach = touching.some((f) => f.status === "CREW_BREACH");
-            const hasDelay = touching.some((f) => f.status === "DELAYED");
+            const st = airportStatusMap.get(airport.id);
+            const hasBreach = st?.hasBreach ?? false;
+            const hasDelay = st?.hasDelay ?? false;
 
             const beaconColor =
               closure || hasBreach
                 ? "#DC2626"
                 : hasDelay
                   ? "#D97706"
-                  : "#2563EB";
+                  : "#2B79FB";
 
             const baseSpare = DATASET.spare_aircraft.find(
               (s) => s.base === airport.id
@@ -745,12 +893,18 @@ export function RadarMap({
               <g
                 key={airport.id}
                 data-interactive="true"
+                role="button"
+                tabIndex={0}
+                aria-label={`${airport.id} ${airport.city} airport${closure ? ", closed" : ""}. Click to configure closure.`}
                 transform={`translate(${pt.x}, ${pt.y}) scale(${invScale})`}
-                className="cursor-pointer"
+                className="cursor-pointer focus:outline-none"
                 onClick={(e) => {
                   e.stopPropagation();
                   onSelectAirport(airport.id);
                 }}
+                onKeyDown={(e) =>
+                  handleSvgKeyActivate(e, () => onSelectAirport(airport.id))
+                }
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   focusOnAirport(airport.id, 2.8);
@@ -781,7 +935,7 @@ export function RadarMap({
                         ? "#DC2626"
                         : frag.fragilityScore >= 32
                           ? "#D97706"
-                          : "#2563EB"
+                          : "#2B79FB"
                     }
                     fillOpacity={0.14}
                     stroke={
@@ -789,7 +943,7 @@ export function RadarMap({
                         ? "#DC2626"
                         : frag.fragilityScore >= 32
                           ? "#D97706"
-                          : "#2563EB"
+                          : "#2B79FB"
                     }
                     strokeOpacity={0.5}
                     strokeWidth={1}
@@ -810,7 +964,7 @@ export function RadarMap({
                   <circle
                     r={13}
                     fill="none"
-                    stroke="#2563EB"
+                    stroke="#2B79FB"
                     strokeWidth={1.8}
                   />
                 )}
@@ -835,7 +989,7 @@ export function RadarMap({
                   fontSize={airport.tier === "mega_hub" ? "11.5" : "10"}
                   fontFamily="var(--font-mono)"
                   fontWeight={airport.tier === "mega_hub" ? "700" : "600"}
-                  fill={closure || hasBreach ? "#DC2626" : "#0F172A"}
+                  fill={closure || hasBreach ? "#B91C1C" : "#0F172A"}
                 >
                   {airport.id}
                 </text>
@@ -851,7 +1005,7 @@ export function RadarMap({
                       height={15}
                       rx={3}
                       fill={spareUsed ? "#ECFDF5" : "#FFFFFF"}
-                      stroke={spareUsed ? "#059669" : "#CBD5E1"}
+                      stroke={spareUsed ? "#047857" : "#CBD5E1"}
                       strokeWidth={1}
                     />
                     <text
@@ -861,7 +1015,7 @@ export function RadarMap({
                       fontSize="8.5"
                       fontFamily="var(--font-mono)"
                       fontWeight="600"
-                      fill={spareUsed ? "#059669" : "#475569"}
+                      fill={spareUsed ? "#047857" : "#475569"}
                     >
                       {spareUsed
                         ? `${baseSpare.tail_id.slice(-4)} ACTIVE`
@@ -882,27 +1036,55 @@ export function RadarMap({
             const color = isHolding
               ? "#DC2626"
               : flight.isSpareOperated
-                ? "#059669"
+                ? "#047857"
                 : flight.delayMin > 0
                   ? "#D97706"
-                  : "#2563EB";
+                  : "#2B79FB";
 
-            const showCallout =
-              isSelected ||
-              isHovered ||
-              isHolding ||
-              (camera.scale >= 1.85 && flight.delayMin > 0);
+            const showCallout = isHolding
+              ? camera.scale >= 1.6 || isSelected || isHovered
+              : isSelected ||
+                isHovered ||
+                (camera.scale >= 1.85 && flight.delayMin > 0);
+
+            // Radially offset holding callout away from hub center to prevent sibling overlap
+            let calloutX = 10;
+            let calloutY = -10;
+            if (isHolding) {
+              const hubCenter = AIRPORT_POINTS.get(flight.destination);
+              if (hubCenter) {
+                const dx = x - hubCenter.x;
+                const dy = y - hubCenter.y;
+                const len = Math.hypot(dx, dy) || 1;
+                const ux = dx / len;
+                const uy = dy / len;
+                calloutX = ux >= 0 ? ux * 14 : ux * 14 - 72;
+                calloutY = uy * 16;
+              }
+            }
 
             return (
               <g
                 key={`plane-${flight.flight_id}`}
                 data-interactive="true"
+                role="button"
+                tabIndex={0}
+                aria-label={`Flight ${flight.flight_id} (${flight.origin} to ${flight.destination}), ${
+                  isHolding
+                    ? "holding"
+                    : flight.delayMin > 0
+                      ? `delayed ${flight.delayMin} minutes`
+                      : "on time"
+                }`}
                 transform={`translate(${x}, ${y}) scale(${invScale})`}
-                className="cursor-pointer"
+                className="cursor-pointer focus:outline-none"
                 onClick={(e) => {
                   e.stopPropagation();
                   onSelectFlight(flight.flight_id);
                 }}
+                onKeyDown={(e) =>
+                  handleSvgKeyActivate(e, () => onSelectFlight(flight.flight_id))
+                }
                 onMouseEnter={() => setHoveredFlightId(flight.flight_id)}
                 onMouseLeave={() => setHoveredFlightId(null)}
               >
@@ -911,7 +1093,7 @@ export function RadarMap({
                   <circle
                     r={11}
                     fill="none"
-                    stroke="#2563EB"
+                    stroke="#2B79FB"
                     strokeWidth={1.6}
                     strokeDasharray="3 2"
                   />
@@ -926,7 +1108,7 @@ export function RadarMap({
                 </g>
 
                 {showCallout && (
-                  <g transform="translate(10, -10)">
+                  <g transform={`translate(${calloutX}, ${calloutY})`}>
                     <rect
                       x={0}
                       y={-8}
@@ -943,7 +1125,7 @@ export function RadarMap({
                       fontSize="8.5"
                       fontFamily="var(--font-mono)"
                       fontWeight="700"
-                      fill="#0F172A"
+                      fill={isHolding ? "#B91C1C" : "#0F172A"}
                     >
                       {flight.flight_id}
                       {isHolding
@@ -961,9 +1143,9 @@ export function RadarMap({
       </svg>
 
       {/* Bottom-Left Compact Legend */}
-      <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex items-center gap-3 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] px-3 py-1.5 text-[11px] font-medium text-[#475569] shadow-sm">
+      <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex items-center gap-3 rounded-full border border-[#E6EBF2] bg-[#FFFFFF] px-3.5 py-1.5 text-[11px] font-medium text-[#475569] shadow-[0_2px_12px_rgba(148,163,184,0.12)]">
         <span className="flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-[#2563EB]" />
+          <span className="h-2 w-2 rounded-full bg-[#2B79FB]" />
           On time
         </span>
         <span className="flex items-center gap-1.5">
@@ -975,8 +1157,8 @@ export function RadarMap({
           Storm / hold
         </span>
         {previewCandidate && (
-          <span className="flex items-center gap-1.5 font-semibold text-[#059669]">
-            <span className="h-2 w-2 rounded-full bg-[#059669]" />
+          <span className="flex items-center gap-1.5 font-semibold text-[#047857]">
+            <span className="h-2 w-2 rounded-full bg-[#047857]" />
             Recovery preview
           </span>
         )}
@@ -987,7 +1169,7 @@ export function RadarMap({
         {simulation.closures.map((c) => (
           <div
             key={`chip-${c.id}`}
-            className="flex items-center gap-1.5 rounded-md border border-[#DC2626]/30 bg-[#FFFFFF] px-2.5 py-1 font-mono text-[11px] font-semibold text-[#DC2626] shadow-sm"
+            className="flex items-center gap-1.5 rounded-full border border-[#FECACA] bg-[#FFFFFF] px-2.5 py-1 font-mono text-[11px] font-semibold text-[#B91C1C] shadow-[0_2px_10px_rgba(148,163,184,0.12)]"
           >
             <CloudLightning className="h-3 w-3" aria-hidden="true" />
             <span>
@@ -997,13 +1179,13 @@ export function RadarMap({
               type="button"
               onClick={() => onRemoveClosure(c.airportId)}
               aria-label={`Remove closure at ${c.airportId}`}
-              className="cursor-pointer rounded p-0.5 text-[#475569] hover:bg-[#FEE2E2] hover:text-[#DC2626]"
+              className="cursor-pointer rounded-full p-0.5 text-[#475569] hover:bg-[#FEE2E2] hover:text-[#B91C1C] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
             >
               <X className="h-3 w-3" aria-hidden="true" />
             </button>
           </div>
         ))}
-        <span className="rounded-md border border-[#E2E8F0] bg-[#FFFFFF] px-2 py-1 font-mono text-[11px] text-[#475569] shadow-sm">
+        <span className="rounded-full border border-[#E6EBF2] bg-[#FFFFFF] px-2.5 py-1 font-mono text-[11px] text-[#475569] shadow-[0_2px_10px_rgba(148,163,184,0.12)]">
           {Math.round(camera.scale * 100)}%
         </span>
       </div>

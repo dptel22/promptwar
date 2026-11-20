@@ -1,4 +1,5 @@
 import { DATASET, formatHHMM, simulateNetwork } from "./engine";
+import { parseCrisisDeterministic } from "./parse-crisis";
 import type {
   AirportClosure,
   DispatcherBriefing,
@@ -6,6 +7,7 @@ import type {
   RecoveryCandidate,
   RecoveryDeltas,
   RecoveryEvaluation,
+  SimulatedFlight,
   SimulationResult,
 } from "./types";
 
@@ -74,7 +76,10 @@ function getActionTouchedTails(action: RecoveryAction): Set<string> {
   return tails;
 }
 
-function areActionsCompatible(a: RecoveryAction, b: RecoveryAction): boolean {
+export function areActionsCompatible(
+  a: RecoveryAction,
+  b: RecoveryAction
+): boolean {
   if (a.type === "SWAP_SPARE" && b.type === "SWAP_SPARE") {
     if (a.spareTailId === b.spareTailId) return false;
   }
@@ -260,7 +265,11 @@ export function evaluateRecoveryCandidates(
 
       const actions = [a.actions[0], b.actions[0]];
       const result = simulateNetwork(closures, [...existingActions, ...actions]);
-      if (isStrictlyBetter(result, a.result) && isStrictlyBetter(result, b.result)) {
+      if (
+        result.metrics.crewBreaches <= baseline.metrics.crewBreaches &&
+        isStrictlyBetter(result, a.result) &&
+        isStrictlyBetter(result, b.result)
+      ) {
         comboCandidates.push({
           id: `${a.id}__${b.id}`,
           title: candidateTitle(actions),
@@ -339,10 +348,17 @@ export function buildDeterministicBriefing(
 
   const top = candidates[0];
   const after = top.result.metrics;
-  const tradeoffAnalysis =
-    `Top option reduces stranded passengers from ${m.totalStrandedPax} to ${after.totalStrandedPax}` +
-    ` (${top.deltas.strandedPaxDelta} pax) and sets crew breaches to ${after.crewBreaches}` +
-    ` with ${after.totalDelayMinutes} total delay minutes.`;
+
+  let tradeoffAnalysis: string;
+  if (top.deltas.strandedPaxDelta < 0 && top.deltas.crewBreachesDelta < 0) {
+    tradeoffAnalysis = `Top option cuts stranded passengers from ${m.totalStrandedPax} to ${after.totalStrandedPax} (${top.deltas.strandedPaxDelta} pax) and clears ${Math.abs(top.deltas.crewBreachesDelta)} crew breach(es) with ${after.totalDelayMinutes} total delay minutes.`;
+  } else if (top.deltas.strandedPaxDelta < 0) {
+    tradeoffAnalysis = `Top option cuts stranded passengers from ${m.totalStrandedPax} to ${after.totalStrandedPax} (${top.deltas.strandedPaxDelta} pax) across ${after.delayedFlights} delayed flights and ${after.totalDelayMinutes} total delay minutes.`;
+  } else if (top.deltas.crewBreachesDelta < 0) {
+    tradeoffAnalysis = `Top option eliminates ${Math.abs(top.deltas.crewBreachesDelta)} crew breach(es) and sets total network delay to ${after.totalDelayMinutes} minutes.`;
+  } else {
+    tradeoffAnalysis = `Top option cuts network delay from ${m.totalDelayMinutes}m to ${after.totalDelayMinutes}m (${top.deltas.totalDelayMinutesDelta}m) and reduces delayed flights from ${m.delayedFlights} to ${after.delayedFlights}.`;
+  }
 
   const optionNotes = candidates.map((c) => {
     const cm = c.result.metrics;
@@ -354,9 +370,14 @@ export function buildDeterministicBriefing(
       })
       .join(" + ");
 
+    const rationale =
+      cm.totalStrandedPax !== m.totalStrandedPax || m.totalStrandedPax > 0
+        ? `Executes ${actionIds}, bringing stranded passengers from ${m.totalStrandedPax} to ${cm.totalStrandedPax} and delayed flights to ${cm.delayedFlights}.`
+        : `Executes ${actionIds}, cuts network delay from ${m.totalDelayMinutes}m to ${cm.totalDelayMinutes}m and sets delayed flights to ${cm.delayedFlights}.`;
+
     return {
       candidateId: c.id,
-      rationale: `Executes ${actionIds}, bringing stranded passengers from ${m.totalStrandedPax} to ${cm.totalStrandedPax} and delayed flights to ${cm.delayedFlights}.`,
+      rationale,
       tradeoff:
         cm.cancelledFlights > 0
           ? `Grounds ${cm.cancelledFlights} flight(s) (${cm.groundedPax} onboard pax) to restore downstream schedule integrity.`
@@ -371,5 +392,221 @@ export function buildDeterministicBriefing(
     executiveSummary,
     tradeoffAnalysis,
     optionNotes,
+  };
+}
+
+export interface DispatcherQueryResponse {
+  answer: string;
+  focusFlightId?: string;
+  focusAirportId?: string;
+  suggestedClosures?: AirportClosure[];
+  actionLabel?: string;
+}
+
+function formatSigned(val: number, suffix = ""): string {
+  return `${val > 0 ? "+" : ""}${val}${suffix}`;
+}
+
+function formatFlightSummary(f: SimulatedFlight): string {
+  const statusPart =
+    f.status === "CREW_BREACH"
+      ? `CREW_BREACH (+${f.crewOvertimeMin}m over 600m duty)`
+      : f.status === "CANCELLED"
+        ? "CANCELLED"
+        : f.delayMin > 0
+          ? `DELAYED +${f.delayMin}m`
+          : "ON_TIME";
+  const chainText =
+    f.causeChain.length > 0
+      ? f.causeChain.map((s) => `${s.flightId} (${s.airportId}: ${s.summary})`).join(" -> ")
+      : "Nominal on-time operation";
+  return `${f.flight_id} (${f.activeTailId}, ${f.origin}->${f.destination}): sched ${f.dep}–${f.arr}, actual ${formatHHMM(f.actualDepMin)}–${formatHHMM(f.actualArrMin)} · ${statusPart} · buffer absorbed ${f.bufferAbsorbedMin}m · crew duty ${f.crewProjectedDutyMin}/600m. Domino chain: ${chainText}.`;
+}
+
+export function answerDispatcherQuery(
+  query: string,
+  simulation: SimulationResult,
+  closures: AirportClosure[],
+  activeActions: RecoveryAction[] = []
+): DispatcherQueryResponse {
+  const trimmed = query.trim();
+  const q = trimmed.toLowerCase();
+
+  // a) +30m storm extension cliff analysis
+  if (
+    q.includes("+30m") ||
+    q.includes("extend") ||
+    q.includes("extension") ||
+    q.includes("longer") ||
+    q.includes("cliff")
+  ) {
+    if (closures.length === 0) {
+      return {
+        answer:
+          "No airport is currently closed. Click any airport beacon or load a storm scenario first to test a +30m extension cliff.",
+      };
+    }
+
+    const extended = closures.map((c) => ({
+      ...c,
+      endMin: Math.min(1380, c.endMin + 30),
+    }));
+    const extSim = simulateNetwork(extended, activeActions);
+    const curM = simulation.metrics;
+    const extM = extSim.metrics;
+    const delayedDelta = extM.delayedFlights - curM.delayedFlights;
+    const paxDelta = extM.totalStrandedPax - curM.totalStrandedPax;
+    const delayDelta = extM.totalDelayMinutes - curM.totalDelayMinutes;
+
+    const newBreach = extSim.flights.find(
+      (f) =>
+        f.status === "CREW_BREACH" &&
+        simulation.flightsById[f.flight_id]?.status !== "CREW_BREACH"
+    );
+
+    const breachNote = newBreach
+      ? ` Triggers new CREW_BREACH on ${newBreach.flight_id} (${newBreach.activeTailId}, ${newBreach.origin}->${newBreach.destination}, +${newBreach.crewOvertimeMin}m over 600m duty).`
+      : extM.crewBreaches > curM.crewBreaches
+        ? ` Adds ${extM.crewBreaches - curM.crewBreaches} crew duty breach(es).`
+        : ` Crew breaches remain at ${extM.crewBreaches}.`;
+
+    const windowText = extended
+      .map((c) => `${c.airportId} until ${formatHHMM(c.endMin)}`)
+      .join(", ");
+
+    return {
+      answer: `Extending closure (+30m: ${windowText}) changes delayed flights by ${formatSigned(delayedDelta)} (${curM.delayedFlights} -> ${extM.delayedFlights}), stranded passengers by ${formatSigned(paxDelta)} (${curM.totalStrandedPax} -> ${extM.totalStrandedPax}), and network delay by ${formatSigned(delayDelta, "m")} (${curM.totalDelayMinutes}m -> ${extM.totalDelayMinutes}m).${breachNote}`,
+      focusFlightId: newBreach?.flight_id,
+      focusAirportId: extended[0]?.airportId,
+      suggestedClosures: extended,
+      actionLabel: "Apply +30m Extension",
+    };
+  }
+
+  // c) Explicit flight ID lookup (DSxxxx)
+  const flightMatch = trimmed.match(/\b(DS\d{4})\b/i);
+  if (flightMatch) {
+    const fid = flightMatch[1].toUpperCase();
+    const flight = simulation.flightsById[fid];
+    if (!flight) {
+      return {
+        answer: `Flight ${fid} was not found in the 70-flight Domino Sky network.`,
+      };
+    }
+    return {
+      answer: formatFlightSummary(flight),
+      focusFlightId: flight.flight_id,
+      focusAirportId: flight.rootCauseAirportId ?? flight.origin,
+    };
+  }
+
+  // d) Explicit tail ID lookup (VT-DSxx)
+  const tailMatch = trimmed.match(/\b(VT-DS\d{2})\b/i);
+  if (tailMatch) {
+    const tid = tailMatch[1].toUpperCase();
+    const legs = simulation.flights
+      .filter((f) => f.tail_id === tid || f.activeTailId === tid)
+      .sort((a, b) => a.leg_order - b.leg_order);
+    if (legs.length === 0) {
+      return {
+        answer: `Tail ${tid} was not found in the 16-aircraft roster.`,
+      };
+    }
+    const breached = legs.find((l) => l.status === "CREW_BREACH");
+    const firstDelayed = legs.find((l) => l.status !== "ON_TIME");
+    const totalDelay = legs.reduce(
+      (sum, l) => sum + (l.status === "DELAYED" ? l.delayMin : 0),
+      0
+    );
+    const legLine = legs
+      .map(
+        (l) =>
+          `${l.flight_id} (${l.origin}->${l.destination}: ${
+            l.status === "ON_TIME"
+              ? "ON_TIME"
+              : l.status === "CREW_BREACH"
+                ? "CREW_BREACH"
+                : l.status === "CANCELLED"
+                  ? "CANCELLED"
+                  : `+${l.delayMin}m`
+          })`
+      )
+      .join(" -> ");
+    return {
+      answer: `${tid} rotation (${legs.length} legs, ${totalDelay}m cumulative operated delay${
+        breached ? `, CREW_BREACH on ${breached.flight_id}` : ", crew legal"
+      }): ${legLine}.`,
+      focusFlightId: (breached ?? firstDelayed ?? legs[0]).flight_id,
+    };
+  }
+
+  // b) Worst domino cascade / bottleneck trace
+  if (
+    q.includes("worst") ||
+    q.includes("domino") ||
+    q.includes("cascade") ||
+    q.includes("chain") ||
+    q.includes("bottleneck")
+  ) {
+    const impacted = simulation.flights.filter((f) => f.status !== "ON_TIME");
+    if (impacted.length === 0) {
+      return {
+        answer:
+          "All 70 flights are operating on schedule with 0 delays and 0 crew breaches. Trigger a storm closure or ask e.g. '75m storm at HYD at 12:00' to trace a cascade.",
+      };
+    }
+
+    impacted.sort((a, b) => {
+      const rank = (f: SimulatedFlight) =>
+        f.status === "CREW_BREACH" ? 0 : f.status === "DELAYED" ? 1 : 2;
+      if (rank(a) !== rank(b)) return rank(a) - rank(b);
+      if (b.delayMin !== a.delayMin) return b.delayMin - a.delayMin;
+      return b.pax - a.pax;
+    });
+
+    const worst = impacted[0];
+    const chainTrace =
+      worst.causeChain.length > 0
+        ? worst.causeChain
+            .map((s) => `${s.flightId} (${s.airportId}: ${s.summary})`)
+            .join(" -> ")
+        : `${worst.flight_id} (${worst.origin}->${worst.destination}: ${worst.primaryReason})`;
+
+    return {
+      answer: `Worst cascade impact: ${worst.flight_id} on ${worst.activeTailId} (${worst.origin}->${worst.destination}) is ${worst.status}${
+        worst.delayMin > 0 ? ` (+${worst.delayMin}m)` : ""
+      }${worst.crewOvertimeMin > 0 ? `, +${worst.crewOvertimeMin}m crew overtime` : ""}. Trace: ${chainTrace}.`,
+      focusFlightId: worst.flight_id,
+      focusAirportId: worst.rootCauseAirportId ?? worst.origin,
+    };
+  }
+
+  // e) Plain-English storm / airport what-if simulation
+  if (trimmed.length >= 3) {
+    const parsed = parseCrisisDeterministic(trimmed);
+    if (parsed.closures.length > 0) {
+      const sim = simulateNetwork(parsed.closures);
+      const pm = sim.metrics;
+      const summaryWindows = parsed.closures
+        .map((c) => `${c.airportId} ${formatHHMM(c.startMin)}–${formatHHMM(c.endMin)}`)
+        .join(", ");
+      return {
+        answer: `Simulated ${summaryWindows}: ${pm.delayedFlights} delayed flights, ${pm.totalStrandedPax} stranded pax, ${pm.crewBreaches} crew breaches, and ${pm.totalDelayMinutes}m total delay across ${pm.affectedTails.length} tails.`,
+        focusAirportId: parsed.closures[0].airportId,
+        suggestedClosures: parsed.closures,
+        actionLabel: "Load Simulated Storm",
+      };
+    }
+  }
+
+  // f) Contextual network guidance
+  const m = simulation.metrics;
+  const activeSummary =
+    closures.length > 0
+      ? `Active closures (${closures.map((c) => `${c.airportId} ${formatHHMM(c.startMin)}–${formatHHMM(c.endMin)}`).join(", ")}): ${m.delayedFlights} delayed flights, ${m.totalStrandedPax} stranded pax, ${m.crewBreaches} crew breaches.`
+      : "Network is currently running Clear Skies (70/70 flights on time).";
+
+  return {
+    answer: `${activeSummary} Try asking "+30m extension", "Trace worst domino chain", "Inspect DS0304", "VT-DS03 rotation", or "90m storm at DEL at 11:15".`,
   };
 }

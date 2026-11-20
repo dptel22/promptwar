@@ -65,25 +65,44 @@ function findAirportsInSegment(segment: string): string[] {
   return deduped;
 }
 
-function parseTimeWindow(segment: string): { startMin: number; endMin: number } {
+interface ParsedWindow {
+  startMin: number;
+  endMin: number;
+  explicit: boolean;
+}
+
+function parseTimeWindow(segment: string): ParsedWindow {
   // Range: "08:00-09:30" or "10am to 11am" or "7:30am - 9:00am"
   const rangeRe =
-    /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i;
-  const rangeMatch = segment.match(rangeRe);
-  if (rangeMatch) {
+    /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/gi;
+  for (const rangeMatch of segment.matchAll(rangeRe)) {
     const h1 = Number(rangeMatch[1]);
     const m1 = Number(rangeMatch[2] ?? "0");
     const mer1 = rangeMatch[3] ?? rangeMatch[6];
     const h2 = Number(rangeMatch[4]);
     const m2 = Number(rangeMatch[5] ?? "0");
     const mer2 = rangeMatch[6] ?? rangeMatch[3];
+    const hasTimeSyntax =
+      rangeMatch[2] !== undefined ||
+      rangeMatch[5] !== undefined ||
+      rangeMatch[3] !== undefined ||
+      rangeMatch[6] !== undefined;
+
+    if (h1 > 23 || h2 > 23 || m1 > 59 || m2 > 59) continue;
+
+    const matchEnd = (rangeMatch.index ?? 0) + rangeMatch[0].length;
+    const trailing = segment.slice(matchEnd);
+    const followedByDurationUnit =
+      /^\s*(?:min|mins|minute|minutes|m|hr|hrs|hour|hours|h)\b/i.test(trailing);
+    if (!hasTimeSyntax && followedByDurationUnit) continue;
+
     const startMin = toMinutes24(h1, m1, mer1);
     let endMin = toMinutes24(h2, m2, mer2);
     if (endMin <= startMin) endMin = Math.min(1380, startMin + 90);
-    return { startMin, endMin };
+    return { startMin, endMin, explicit: true };
   }
 
-  // Duration + single start time: "90 min ... at 7:30am" or "at 12:00 for 75 minutes"
+  // Duration + single start time: "90 min ... at 7:30am" or "60 to 90 minute storm at HYD at 12:00"
   const durRe = /\b(\d{1,3})\s*(?:min|mins|minute|minutes|m|hr|hrs|hour|hours|h)\b/i;
   const durMatch = segment.match(durRe);
   let durationMin = 90;
@@ -100,19 +119,23 @@ function parseTimeWindow(segment: string): { startMin: number; endMin: number } 
   const singleTimeRe = /\b(?:at\s+|from\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/gi;
   for (const m of segment.matchAll(singleTimeRe)) {
     const rawHour = Number(m[1]);
+    const rawMin = Number(m[2] ?? "0");
     const hasColon = m[2] !== undefined;
     const hasMeridiem = m[3] !== undefined;
-    const hasPrefix = m[0].toLowerCase().startsWith("at") || m[0].toLowerCase().startsWith("from");
+    const hasPrefix =
+      m[0].toLowerCase().startsWith("at") ||
+      m[0].toLowerCase().startsWith("from");
     if (!hasColon && !hasMeridiem && !hasPrefix) continue;
-    if (rawHour > 23) continue;
-    const startMin = toMinutes24(rawHour, Number(m[2] ?? "0"), m[3]);
+    if (rawHour > 23 || rawMin > 59) continue;
+    const startMin = toMinutes24(rawHour, rawMin, m[3]);
     return {
       startMin,
       endMin: Math.min(1380, startMin + durationMin),
+      explicit: true,
     };
   }
 
-  return { startMin: 480, endMin: 480 + durationMin };
+  return { startMin: 480, endMin: 480 + durationMin, explicit: false };
 }
 
 export function parseCrisisDeterministic(text: string): {
@@ -124,22 +147,40 @@ export function parseCrisisDeterministic(text: string): {
     .map((s) => s.trim())
     .filter(Boolean);
 
+  const parsedSegments = segments
+    .map((seg) => ({
+      airports: findAirportsInSegment(seg),
+      window: parseTimeWindow(seg),
+    }))
+    .filter((item) => item.airports.length > 0);
+
+  const fallbackExplicit = parsedSegments.find((p) => p.window.explicit)?.window;
+  const wholeWindow = parseTimeWindow(text);
+
   const closures: AirportClosure[] = [];
   const usedAirports = new Set<string>();
 
-  for (const seg of segments) {
-    const airports = findAirportsInSegment(seg);
-    if (airports.length === 0) continue;
-    const window = parseTimeWindow(seg);
+  for (let i = 0; i < parsedSegments.length; i++) {
+    const seg = parsedSegments[i];
+    let resolved = seg.window;
+    if (!resolved.explicit) {
+      const nearestExplicit =
+        parsedSegments.slice(i + 1).find((p) => p.window.explicit)?.window ??
+        fallbackExplicit ??
+        (wholeWindow.explicit ? wholeWindow : undefined);
+      if (nearestExplicit) {
+        resolved = nearestExplicit;
+      }
+    }
 
-    for (const airportId of airports) {
-      if (usedAirports.has(`${airportId}-${window.startMin}`)) continue;
-      usedAirports.add(`${airportId}-${window.startMin}`);
+    for (const airportId of seg.airports) {
+      if (usedAirports.has(`${airportId}-${resolved.startMin}`)) continue;
+      usedAirports.add(`${airportId}-${resolved.startMin}`);
       closures.push({
-        id: `crisis-${airportId}-${window.startMin}`,
+        id: `crisis-${airportId}-${resolved.startMin}`,
         airportId,
-        startMin: window.startMin,
-        endMin: window.endMin,
+        startMin: resolved.startMin,
+        endMin: resolved.endMin,
       });
     }
   }
@@ -147,13 +188,12 @@ export function parseCrisisDeterministic(text: string): {
   // Fallback across whole string if split hid airport/time in separate halves
   if (closures.length === 0) {
     const airports = findAirportsInSegment(text);
-    const window = parseTimeWindow(text);
     for (const airportId of airports) {
       closures.push({
-        id: `crisis-${airportId}-${window.startMin}`,
+        id: `crisis-${airportId}-${wholeWindow.startMin}`,
         airportId,
-        startMin: window.startMin,
-        endMin: window.endMin,
+        startMin: wholeWindow.startMin,
+        endMin: wholeWindow.endMin,
       });
     }
   }

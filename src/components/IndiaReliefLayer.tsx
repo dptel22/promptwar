@@ -1,3 +1,4 @@
+import { memo } from "react";
 import indiaGeoRaw from "@/data/india-geo.json";
 import { geoRingToSvgPath } from "@/lib/geo";
 
@@ -21,59 +22,73 @@ const CONTEXT_PATHS = FEATURES.filter(
   d: geoRingToSvgPath(f.geometry.coordinates[0]),
 }));
 
-export function IndiaReliefLayer({ scaleFactor = 1 }: { scaleFactor?: number }) {
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+export const IndiaReliefLayer = memo(function IndiaReliefLayer({
+  scaleFactor = 1,
+}: {
+  scaleFactor?: number;
+}) {
+  const shadowOffsetY = round2(10 * scaleFactor);
+  const bevelOffsetY = round2(5 * scaleFactor);
+  const contextStroke = round2(1 * scaleFactor);
+  const bevelStroke = round2(0.85 * scaleFactor);
+  const topStroke = round2(1.25 * scaleFactor);
+
   return (
     <g aria-hidden="true">
-      {/* Subtle Sri Lanka reference outline */}
+      {/* Subtle Sri Lanka context outline */}
       {CONTEXT_PATHS.map((p) => (
         <path
           key={`ctx-${p.name}`}
           d={p.d}
-          fill="#F1F5F9"
-          stroke="#CBD5E1"
-          strokeWidth={1 * scaleFactor}
+          fill="#F4F7FB"
+          stroke="#D5DFEE"
+          strokeWidth={contextStroke}
           strokeLinejoin="round"
         />
       ))}
 
-      {/* Sculpted paper relief drop shadow */}
-      <g transform={`translate(0, ${9 * scaleFactor})`}>
+      {/* Sculpted cool drop shadow */}
+      <g transform={`translate(0, ${shadowOffsetY})`}>
         {MAINLAND_PATHS.map((p) => (
           <path
             key={`shadow-${p.name}`}
             d={p.d}
-            fill="#CBD5E1"
-            fillOpacity={0.75}
+            fill="#D5DFEE"
+            fillOpacity={0.78}
             stroke="none"
           />
         ))}
       </g>
 
       {/* Sculpted mid-bevel ridge */}
-      <g transform={`translate(0, ${4.5 * scaleFactor})`}>
+      <g transform={`translate(0, ${bevelOffsetY})`}>
         {MAINLAND_PATHS.map((p) => (
           <path
             key={`bevel-${p.name}`}
             d={p.d}
-            fill="#E2E8F0"
-            stroke="#CBD5E1"
-            strokeWidth={0.8 * scaleFactor}
+            fill="#E3EAF5"
+            stroke="#CFD9E8"
+            strokeWidth={bevelStroke}
             strokeLinejoin="round"
           />
         ))}
       </g>
 
-      {/* Crisp elevated white India landmass */}
+      {/* Elevated pure-white top landmass */}
       {MAINLAND_PATHS.map((p) => (
         <path
           key={`top-${p.name}`}
           d={p.d}
           fill="#FFFFFF"
-          stroke="#94A3B8"
-          strokeWidth={1.3 * scaleFactor}
+          stroke="#B9C6DA"
+          strokeWidth={topStroke}
           strokeLinejoin="round"
         />
       ))}
     </g>
   );
-}
+});
