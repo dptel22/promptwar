@@ -1,3 +1,7 @@
+/**
+ * Top sticky navigation bar linking Story, Simulator, and About views.
+ */
+
 "use client";
 
 import Link from "next/link";
@@ -10,6 +14,9 @@ const NAV_ITEMS = [
   { href: "/about", label: "About" },
 ] as const;
 
+/**
+ * Renders the persistent top navigation header with active route indicator and simulator CTA.
+ */
 export function SiteNav() {
   const pathname = usePathname();
 

@@ -1,11 +1,26 @@
-import { formatHHMM } from "./engine";
-import type { DispatcherBriefing, RecoveryEvaluation } from "./types";
+/**
+ * Zero-hallucination verifier for AI dispatcher briefings.
+ *
+ * An allow-list is derived solely from the deterministic simulation and ranked
+ * candidates. Any recommended candidate id, flight/tail/connection/crew id, or
+ * standalone integer in the AI prose that is NOT on the allow-list is a
+ * violation, and the API route then falls back to the deterministic briefing.
+ */
 
+import { formatHHMM } from "./constants";
+import type {
+  DispatcherBriefing,
+  RecoveryEvaluation,
+  SimulationResult,
+} from "./types";
+
+/** Outcome of verifying a briefing against the allow-list. */
 export interface VerificationResult {
   valid: boolean;
   violations: string[];
 }
 
+/** Every identifier and integer an AI briefing is permitted to mention. */
 export interface AllowList {
   numbers: Set<number>;
   flightIds: Set<string>;
@@ -15,19 +30,19 @@ export interface AllowList {
   candidateIds: Set<string>;
 }
 
-function addTimeParts(set: Set<number>, minutes: number) {
-  const hhmm = formatHHMM(minutes);
-  const [hh, mm] = hhmm.split(":").map((part) => Number(part));
+/** Small constants any briefing may cite (fleet size, duty/turnaround limits). */
+const BASE_NUMBERS = [0, 16, 30, 70, 180, 600];
+
+/** Clock times are spoken as `HH:MM`, so both the hour and minute parts are allowed. */
+function addTimeParts(set: Set<number>, minutes: number): void {
+  const [hh, mm] = formatHHMM(minutes).split(":").map(Number);
   set.add(hh);
   set.add(mm);
 }
 
-function collectSimulationTokens(
-  result: RecoveryEvaluation["baseline"],
-  allow: AllowList
-) {
+function collectMetricTokens(result: SimulationResult, allow: AllowList): void {
   const m = result.metrics;
-  const metricValues = [
+  const values = [
     m.totalFlights,
     m.onTimeFlights,
     m.delayedFlights,
@@ -41,81 +56,76 @@ function collectSimulationTokens(
     m.missedConnectionPax,
     m.totalStrandedPax,
   ];
-  for (const val of metricValues) {
-    allow.numbers.add(Math.abs(val));
-  }
+  for (const val of values) allow.numbers.add(Math.abs(val));
 
   for (const c of result.closures) {
     addTimeParts(allow.numbers, c.startMin);
     addTimeParts(allow.numbers, c.endMin);
     allow.numbers.add(c.endMin - c.startMin);
   }
+}
 
+/** Only disrupted (or spare/buffer-affected) flights may be named by the AI. */
+function collectFlightTokens(result: SimulationResult, allow: AllowList): void {
   for (const f of result.flights) {
-    if (
-      f.status !== "ON_TIME" ||
-      f.isSpareOperated ||
-      f.bufferAbsorbedMin > 0
-    ) {
-      allow.flightIds.add(f.flight_id);
-      allow.tailIds.add(f.tail_id);
-      allow.tailIds.add(f.activeTailId);
-      allow.crewIds.add(f.activeCrewId);
-      allow.numbers.add(f.pax);
-      allow.numbers.add(f.delayMin);
-      allow.numbers.add(f.bufferAbsorbedMin);
-      allow.numbers.add(f.crewOvertimeMin);
-      addTimeParts(allow.numbers, f.scheduledDepMin);
-      addTimeParts(allow.numbers, f.actualDepMin);
-      addTimeParts(allow.numbers, f.actualArrMin);
+    if (f.status === "ON_TIME" && !f.isSpareOperated && f.bufferAbsorbedMin <= 0) continue;
+    allow.flightIds.add(f.flight_id);
+    allow.tailIds.add(f.tail_id);
+    allow.tailIds.add(f.activeTailId);
+    allow.crewIds.add(f.activeCrewId);
+    for (const n of [f.pax, f.delayMin, f.bufferAbsorbedMin, f.crewOvertimeMin]) {
+      allow.numbers.add(n);
     }
-  }
-
-  for (const cx of result.connections) {
-    if (cx.status !== "INTACT") {
-      allow.connectionIds.add(cx.connection_id);
-      allow.flightIds.add(cx.from_flight);
-      allow.flightIds.add(cx.to_flight);
-      allow.numbers.add(cx.passengers);
-      allow.numbers.add(cx.min_connect_minutes);
-      allow.numbers.add(cx.shortfallMin);
-      if (cx.actualConnectMin !== null) {
-        allow.numbers.add(Math.abs(cx.actualConnectMin));
-      }
-    }
-  }
-
-  for (const cr of result.crews) {
-    if (cr.breached) {
-      allow.crewIds.add(cr.crewId);
-      allow.tailIds.add(cr.tailId);
-      allow.numbers.add(cr.overtimeMin);
-      if (cr.breachFlightId) allow.flightIds.add(cr.breachFlightId);
-    }
+    addTimeParts(allow.numbers, f.scheduledDepMin);
+    addTimeParts(allow.numbers, f.actualDepMin);
+    addTimeParts(allow.numbers, f.actualArrMin);
   }
 }
 
-export function buildAllowList(evaluation: RecoveryEvaluation): AllowList {
-  const allow: AllowList = {
-    numbers: new Set<number>([0, 16, 30, 70, 180, 600]),
-    flightIds: new Set<string>(),
-    tailIds: new Set<string>(),
-    connectionIds: new Set<string>(),
-    crewIds: new Set<string>(),
-    candidateIds: new Set<string>(),
-  };
+function collectConnectionTokens(result: SimulationResult, allow: AllowList): void {
+  for (const cx of result.connections) {
+    if (cx.status === "INTACT") continue;
+    allow.connectionIds.add(cx.connection_id);
+    allow.flightIds.add(cx.from_flight);
+    allow.flightIds.add(cx.to_flight);
+    allow.numbers.add(cx.passengers);
+    allow.numbers.add(cx.min_connect_minutes);
+    allow.numbers.add(cx.shortfallMin);
+    if (cx.actualConnectMin !== null) allow.numbers.add(Math.abs(cx.actualConnectMin));
+  }
+}
 
-  collectSimulationTokens(evaluation.baseline, allow);
+function collectCrewTokens(result: SimulationResult, allow: AllowList): void {
+  for (const cr of result.crews) {
+    if (!cr.breached) continue;
+    allow.crewIds.add(cr.crewId);
+    allow.tailIds.add(cr.tailId);
+    allow.numbers.add(cr.overtimeMin);
+    if (cr.breachFlightId) allow.flightIds.add(cr.breachFlightId);
+  }
+}
 
-  for (let i = 0; i < evaluation.candidates.length; i++) {
-    const c = evaluation.candidates[i];
+function collectSimulationTokens(result: SimulationResult, allow: AllowList): void {
+  collectMetricTokens(result, allow);
+  collectFlightTokens(result, allow);
+  collectConnectionTokens(result, allow);
+  collectCrewTokens(result, allow);
+}
+
+function collectCandidateTokens(evaluation: RecoveryEvaluation, allow: AllowList): void {
+  evaluation.candidates.forEach((c, i) => {
     allow.candidateIds.add(c.id);
-    allow.numbers.add(i + 1);
-    allow.numbers.add(Math.abs(c.deltas.strandedPaxDelta));
-    allow.numbers.add(Math.abs(c.deltas.crewBreachesDelta));
-    allow.numbers.add(Math.abs(c.deltas.delayedFlightsDelta));
-    allow.numbers.add(Math.abs(c.deltas.totalDelayMinutesDelta));
-    allow.numbers.add(c.deltas.savedConnections);
+    allow.numbers.add(i + 1); // Option ordinals ("option 2") are legitimate.
+    const d = c.deltas;
+    for (const n of [
+      d.strandedPaxDelta,
+      d.crewBreachesDelta,
+      d.delayedFlightsDelta,
+      d.totalDelayMinutesDelta,
+    ]) {
+      allow.numbers.add(Math.abs(n));
+    }
+    allow.numbers.add(d.savedConnections);
 
     for (const action of c.actions) {
       if (action.type === "SWAP_SPARE") {
@@ -123,96 +133,108 @@ export function buildAllowList(evaluation: RecoveryEvaluation): AllowList {
         allow.flightIds.add(action.targetFlightId);
       } else if (action.type === "CANCEL_FLIGHT") {
         for (const fid of action.flightIds) allow.flightIds.add(fid);
-      } else if (action.type === "HOLD_CONNECTION") {
+      } else {
         allow.connectionIds.add(action.connectionId);
         allow.flightIds.add(action.flightId);
         allow.numbers.add(action.holdMinutes);
       }
     }
-
     collectSimulationTokens(c.result, allow);
-  }
+  });
+}
 
+/**
+ * Builds the grounded allow-list for an evaluation.
+ *
+ * @param evaluation - Baseline simulation and ranked candidates.
+ * @returns Sets of permitted numbers and identifiers.
+ */
+export function buildAllowList(evaluation: RecoveryEvaluation): AllowList {
+  const allow: AllowList = {
+    numbers: new Set<number>(BASE_NUMBERS),
+    flightIds: new Set<string>(),
+    tailIds: new Set<string>(),
+    connectionIds: new Set<string>(),
+    crewIds: new Set<string>(),
+    candidateIds: new Set<string>(),
+  };
+  collectSimulationTokens(evaluation.baseline, allow);
+  collectCandidateTokens(evaluation, allow);
   return allow;
 }
 
-export function verifyAiBriefing(
-  briefing: DispatcherBriefing,
-  evaluation: RecoveryEvaluation
-): VerificationResult {
-  const allow = buildAllowList(evaluation);
-  const violations: string[] = [];
-
-  if (evaluation.candidates.length === 0) {
-    if (briefing.recommendedCandidateId !== null) {
-      violations.push(
-        `Invalid recommendedCandidateId "${briefing.recommendedCandidateId}" when no candidates exist`
-      );
-    }
-  } else if (
-    !briefing.recommendedCandidateId ||
-    !allow.candidateIds.has(briefing.recommendedCandidateId)
-  ) {
-    violations.push(
-      `Invalid recommendedCandidateId "${briefing.recommendedCandidateId}"`
-    );
+/** Flags every `pattern` match in `text` that is absent from `allowed`. */
+function flagUngrounded(
+  text: string,
+  pattern: RegExp,
+  allowed: Set<string>,
+  label: string,
+  violations: string[]
+): void {
+  for (const match of text.matchAll(pattern)) {
+    if (!allowed.has(match[0])) violations.push(`${label}: ${match[0]}`);
   }
+}
 
-  const proseSegments = [
-    briefing.executiveSummary,
-    briefing.tradeoffAnalysis,
-    ...briefing.optionNotes.flatMap((n) => [n.rationale, n.tradeoff]),
-  ];
+function checkRecommendation(
+  briefing: DispatcherBriefing,
+  evaluation: RecoveryEvaluation,
+  allow: AllowList,
+  violations: string[]
+): void {
+  const id = briefing.recommendedCandidateId;
+  if (evaluation.candidates.length === 0) {
+    if (id !== null) violations.push(`Invalid recommendedCandidateId "${id}" when no candidates exist`);
+  } else if (!id || !allow.candidateIds.has(id)) {
+    violations.push(`Invalid recommendedCandidateId "${id}"`);
+  }
 
   for (const note of briefing.optionNotes) {
     if (!allow.candidateIds.has(note.candidateId)) {
       violations.push(`Unknown candidateId in optionNotes: ${note.candidateId}`);
     }
   }
+}
 
-  const combinedText = proseSegments.join(" ");
-
-  for (const match of combinedText.matchAll(/\bDS\d{4}\b/g)) {
-    if (!allow.flightIds.has(match[0])) {
-      violations.push(`Ungrounded flight ID: ${match[0]}`);
-    }
-  }
-
-  for (const match of combinedText.matchAll(/\bVT-DS\d{2}\b/g)) {
-    if (!allow.tailIds.has(match[0])) {
-      violations.push(`Ungrounded tail ID: ${match[0]}`);
-    }
-  }
-
-  for (const match of combinedText.matchAll(/\bCX\d{2}\b/g)) {
-    if (!allow.connectionIds.has(match[0])) {
-      violations.push(`Ungrounded connection ID: ${match[0]}`);
-    }
-  }
-
-  for (const match of combinedText.matchAll(/\bCR\d{2}\b/g)) {
-    if (!allow.crewIds.has(match[0])) {
-      violations.push(`Ungrounded crew ID: ${match[0]}`);
-    }
-  }
-
-  // Strip alphanumeric aviation identifiers before verifying standalone integers
-  const sanitizedForNumbers = combinedText
+/** Strips alphanumeric aviation identifiers so their digits are not read as integers. */
+function stripIdentifiers(text: string): string {
+  return text
     .replace(/\bDS\d{4}\b/g, " ")
     .replace(/\bVT-DS\d{2}\b/g, " ")
     .replace(/\bRES-\d{2}\b/g, " ")
     .replace(/\bCX\d{2}\b/g, " ")
     .replace(/\bCR\d{2}\b/g, " ");
+}
 
-  for (const match of sanitizedForNumbers.matchAll(/\b\d+\b/g)) {
-    const num = Number(match[0]);
-    if (!allow.numbers.has(num)) {
-      violations.push(`Ungrounded integer: ${match[0]}`);
-    }
+/**
+ * Verifies that every claim in an AI briefing is grounded in simulated data.
+ *
+ * @param briefing - AI generated briefing to check.
+ * @param evaluation - Deterministic evaluation the briefing must agree with.
+ * @returns `valid` plus a human-readable list of violations.
+ */
+export function verifyAiBriefing(
+  briefing: DispatcherBriefing,
+  evaluation: RecoveryEvaluation
+): VerificationResult {
+  const allow = buildAllowList(evaluation);
+  const violations: string[] = [];
+  checkRecommendation(briefing, evaluation, allow, violations);
+
+  const text = [
+    briefing.executiveSummary,
+    briefing.tradeoffAnalysis,
+    ...briefing.optionNotes.flatMap((n) => [n.rationale, n.tradeoff]),
+  ].join(" ");
+
+  flagUngrounded(text, /\bDS\d{4}\b/g, allow.flightIds, "Ungrounded flight ID", violations);
+  flagUngrounded(text, /\bVT-DS\d{2}\b/g, allow.tailIds, "Ungrounded tail ID", violations);
+  flagUngrounded(text, /\bCX\d{2}\b/g, allow.connectionIds, "Ungrounded connection ID", violations);
+  flagUngrounded(text, /\bCR\d{2}\b/g, allow.crewIds, "Ungrounded crew ID", violations);
+
+  for (const match of stripIdentifiers(text).matchAll(/\b\d+\b/g)) {
+    if (!allow.numbers.has(Number(match[0]))) violations.push(`Ungrounded integer: ${match[0]}`);
   }
 
-  return {
-    valid: violations.length === 0,
-    violations,
-  };
+  return { valid: violations.length === 0, violations };
 }

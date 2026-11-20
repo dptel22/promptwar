@@ -1,3 +1,8 @@
+/**
+ * Domino Sky landing story page orchestrating the live hero chronograph dial,
+ * scroll-scrubbed 6-layer architecture blueprint, and operational chapters.
+ */
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -7,7 +12,8 @@ import { AnimeHeroDial } from "@/components/AnimeHeroDial";
 import { ExplodedBlueprint } from "@/components/ExplodedBlueprint";
 import { LandingModules } from "@/components/LandingModules";
 import { SiteNav } from "@/components/SiteNav";
-import { parseHHMM, simulateNetwork } from "@/lib/sim/engine";
+import { parseHHMM } from "@/lib/sim/constants";
+import { simulateNetwork } from "@/lib/sim/engine";
 import type { AirportClosure } from "@/lib/sim/types";
 
 interface StoryEnv {
@@ -91,6 +97,9 @@ const ENVIRONMENTS: StoryEnv[] = [
   },
 ];
 
+/**
+ * Renders the three-act Domino Sky interactive story landing page.
+ */
 export default function LandingPage() {
   const [envId, setEnvId] = useState("bom-90m");
   const activeEnv =
@@ -101,12 +110,33 @@ export default function LandingPage() {
     [activeEnv.closures]
   );
 
+  const heroStats = [
+    {
+      label: "Delayed flights",
+      value: sim.metrics.delayedFlights,
+      color: "text-[#B45309]",
+    },
+    {
+      label: "Stranded pax",
+      value: sim.metrics.totalStrandedPax,
+      color: "text-[#B91C1C]",
+    },
+    {
+      label: "Total delay",
+      value: `${sim.metrics.totalDelayMinutes}m`,
+      color: "text-[#0F172A]",
+    },
+  ];
+
   return (
     <div className="light-grid-bg min-h-screen text-[#0F172A]">
       <SiteNav />
 
       {/* Act 1: Split Hero with Circular Chronograph Dial */}
-      <main className="mx-auto max-w-6xl px-4 pb-14 pt-10 lg:px-8 lg:pt-14">
+      <main
+        id="main-content"
+        className="mx-auto max-w-6xl px-4 pb-14 pt-10 lg:px-8 lg:pt-14"
+      >
         <div className="grid items-center gap-10 lg:grid-cols-12">
           <div className="lg:col-span-5">
             <h1 className="font-display text-4xl font-bold tracking-tight text-[#0F172A] sm:text-5xl">
@@ -151,30 +181,16 @@ export default function LandingPage() {
 
             {/* Live Computed Deterministic 3-Number Strip */}
             <div className="mt-5 flex flex-wrap items-center gap-6 border-y border-[#E6EBF2] py-3 font-mono tabular-nums">
-              <div>
-                <div className="text-xl font-bold text-[#B45309]">
-                  {sim.metrics.delayedFlights}
+              {heroStats.map((stat) => (
+                <div key={stat.label}>
+                  <div className={`text-xl font-bold ${stat.color}`}>
+                    {stat.value}
+                  </div>
+                  <div className="font-sans text-[11px] text-[#475569]">
+                    {stat.label}
+                  </div>
                 </div>
-                <div className="font-sans text-[11px] text-[#475569]">
-                  Delayed flights
-                </div>
-              </div>
-              <div>
-                <div className="text-xl font-bold text-[#B91C1C]">
-                  {sim.metrics.totalStrandedPax}
-                </div>
-                <div className="font-sans text-[11px] text-[#475569]">
-                  Stranded pax
-                </div>
-              </div>
-              <div>
-                <div className="text-xl font-bold text-[#0F172A]">
-                  {sim.metrics.totalDelayMinutes}m
-                </div>
-                <div className="font-sans text-[11px] text-[#475569]">
-                  Total delay
-                </div>
-              </div>
+              ))}
             </div>
 
             {/* Primary & Secondary CTAs */}

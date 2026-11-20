@@ -1,14 +1,19 @@
+/**
+ * Interactive single-day IST timeline scrubber with hourly flight volume
+ * histogram, storm window highlights, playback toggle, and speed selector.
+ */
+
 "use client";
 
 import { useMemo } from "react";
 import { FastForward, Pause, Play } from "lucide-react";
-import { formatHHMM } from "@/lib/sim/engine";
+import { CLOCK_MAX, CLOCK_MIN, formatHHMM } from "@/lib/sim/constants";
 import type { SimulationResult } from "@/lib/sim/types";
 
-export const CLOCK_MIN = 330; // 05:30 IST
-export const CLOCK_MAX = 1350; // 22:30 IST
+export { CLOCK_MAX, CLOCK_MIN };
 
-interface TimelineScrubberProps {
+/** Props accepted by `TimelineScrubber`. */
+export interface TimelineScrubberProps {
   simulation: SimulationResult;
   clockMin: number;
   isPlaying: boolean;
@@ -20,6 +25,9 @@ interface TimelineScrubberProps {
 
 const BUCKET_COUNT = 34;
 
+/**
+ * Renders the floating bottom timeline scrubber and traffic density bars.
+ */
 export function TimelineScrubber({
   simulation,
   clockMin,
@@ -91,10 +99,7 @@ export function TimelineScrubber({
         <div className="flex flex-1 flex-col gap-1">
           <div className="flex h-6 items-end gap-[2px]" aria-hidden="true">
             {buckets.arr.map((b, i) => {
-              const hPct = Math.max(
-                14,
-                Math.round((b.total / buckets.maxTotal) * 100)
-              );
+              const hPct = Math.max(14, Math.round((b.total / buckets.maxTotal) * 100));
               const isCurrent = displayMin >= b.start && displayMin < b.end;
               const color = isCurrent
                 ? "bg-[#2B79FB]"
@@ -134,16 +139,11 @@ export function TimelineScrubber({
           <div className="flex items-center justify-end gap-1.5">
             {isPlaying && (
               <span className="inline-flex items-center gap-1 rounded-full bg-[#ECFDF5] px-1.5 py-0.5 font-mono text-[9px] font-semibold text-[#047857]">
-                <span
-                  className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#047857]"
-                  aria-hidden="true"
-                />
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#047857]" aria-hidden="true" />
                 LIVE
               </span>
             )}
-            <span className="text-sm font-bold text-[#0F172A]">
-              {formatHHMM(displayMin)}
-            </span>
+            <span className="text-sm font-bold text-[#0F172A]">{formatHHMM(displayMin)}</span>
           </div>
           <div className="text-[10px] text-[#475569]">IST · 05:30–22:30</div>
         </div>

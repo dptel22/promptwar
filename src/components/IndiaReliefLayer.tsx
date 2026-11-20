@@ -1,6 +1,10 @@
+/**
+ * Pure sculptural paper-relief SVG layer rendering India and context geography.
+ */
+
 import { memo } from "react";
 import indiaGeoRaw from "@/data/india-geo.json";
-import { geoRingToSvgPath } from "@/lib/geo";
+import { geoRingToSvgPath, round2 } from "@/lib/geo";
 
 interface GeoFeature {
   properties: { name: string; kind: string };
@@ -22,10 +26,9 @@ const CONTEXT_PATHS = FEATURES.filter(
   d: geoRingToSvgPath(f.geometry.coordinates[0]),
 }));
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
+/**
+ * Memoized three-tier paper relief landmass of India scaling crisp strokes inverse to zoom.
+ */
 export const IndiaReliefLayer = memo(function IndiaReliefLayer({
   scaleFactor = 1,
 }: {

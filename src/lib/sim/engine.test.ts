@@ -11,10 +11,11 @@ describe("Domino Sky dataset & deterministic cascade engine", () => {
 
     const byId = new Map(DATASET.flights.map((f) => [f.flight_id, f]));
     for (const cx of DATASET.connections) {
-      const fromF = byId.get(cx.from_flight)!;
-      const toF = byId.get(cx.to_flight)!;
+      const fromF = byId.get(cx.from_flight);
+      const toF = byId.get(cx.to_flight);
       expect(fromF).toBeDefined();
       expect(toF).toBeDefined();
+      if (!fromF || !toF) continue;
       expect(cx.passengers).toBeLessThanOrEqual(Math.min(fromF.pax, toF.pax));
     }
   });
@@ -142,9 +143,10 @@ describe("Domino Sky dataset & deterministic cascade engine", () => {
       },
     ]);
 
-    const cx01 = res.connections.find((c) => c.connection_id === "CX01")!;
-    expect(cx01.status).toBe("BROKEN_GROUNDED");
-    expect(cx01.isDualGrounded).toBe(true);
+    const cx01 = res.connections.find((c) => c.connection_id === "CX01");
+    expect(cx01).toBeDefined();
+    expect(cx01?.status).toBe("BROKEN_GROUNDED");
+    expect(cx01?.isDualGrounded).toBe(true);
     expect(res.metrics.dualGroundedOverlapPax).toBeGreaterThanOrEqual(43);
     expect(res.metrics.totalStrandedPax).toBe(
       res.metrics.groundedPax - res.metrics.dualGroundedOverlapPax + res.metrics.missedConnectionPax

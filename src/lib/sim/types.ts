@@ -1,3 +1,12 @@
+/**
+ * Canonical domain types for the Domino Sky simulator.
+ *
+ * Covers the raw dataset (airports, flights, connections, crews, spares), user
+ * inputs (closures, recovery actions), simulation outputs (per-flight timings,
+ * crew duty, metrics, domino cause chains) and AI/dispatcher briefing shapes.
+ * Types only: this module has no runtime code.
+ */
+
 export type AirportTier = "mega_hub" | "regional_hub" | "spoke";
 
 export interface Airport {

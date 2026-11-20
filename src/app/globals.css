@@ -15,7 +15,6 @@ body {
   background-color: #fbfcfd;
   color: #0f172a;
   font-family: var(--font-sans);
-  overflow-x: hidden;
 }
 
 .light-grid-bg {
@@ -116,15 +115,4 @@ body {
     transparent 4px,
     transparent 8px
   );
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .radar-storm-ring,
-  .domino-arc-flow,
-  .dial-sweep-ring {
-    animation: none !important;
-  }
-  * {
-    scroll-behavior: auto !important;
-  }
 }

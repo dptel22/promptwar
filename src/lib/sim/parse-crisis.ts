@@ -1,6 +1,17 @@
-import { DATASET, formatHHMM } from "./engine";
+/**
+ * Offline plain-English crisis parser.
+ *
+ * Converts text such as "90 min thunderstorm in Mumbai at 7:30am" or "BOM and DEL
+ * closed 12:00-13:30" into airport closure windows using IATA codes, city aliases,
+ * explicit ranges, durations and single start times. It is the deterministic
+ * fallback for the `/api/parse-crisis` route and the dispatcher "what-if" query,
+ * so it must never throw and always clamps windows to the operating day.
+ */
+
+import { CLOSURE_MAX, CLOSURE_MIN, VALID_IATA, formatHHMM } from "./constants";
 import type { AirportClosure } from "./types";
 
+/** Lower-case city names / historic aliases mapped to IATA codes. */
 const AIRPORT_ALIASES: Array<[string, string]> = [
   ["thiruvananthapuram", "TRV"],
   ["trivandrum", "TRV"],
@@ -26,8 +37,9 @@ const AIRPORT_ALIASES: Array<[string, string]> = [
   ["goa", "GOI"],
 ];
 
-const VALID_IATA = new Set(DATASET.airports.map((a) => a.id));
+const AIRPORT_CODES: readonly string[] = VALID_IATA;
 
+/** Converts a clock reading to a minute of day clamped to the permitted closure window. */
 function toMinutes24(hourRaw: number, minRaw: number, meridiem?: string): number {
   let hour = hourRaw;
   if (meridiem) {
@@ -35,7 +47,7 @@ function toMinutes24(hourRaw: number, minRaw: number, meridiem?: string): number
     if (m === "pm" && hour < 12) hour += 12;
     if (m === "am" && hour === 12) hour = 0;
   }
-  return Math.max(300, Math.min(1380, hour * 60 + minRaw));
+  return Math.max(CLOSURE_MIN, Math.min(CLOSURE_MAX, hour * 60 + minRaw));
 }
 
 function findAirportsInSegment(segment: string): string[] {
@@ -43,7 +55,7 @@ function findAirportsInSegment(segment: string): string[] {
   const upper = segment.toUpperCase();
   const lower = segment.toLowerCase();
 
-  for (const code of VALID_IATA) {
+  for (const code of AIRPORT_CODES) {
     const re = new RegExp(`\\b${code}\\b`, "g");
     for (const m of upper.matchAll(re)) {
       if (m.index !== undefined) found.push({ idx: m.index, code });
@@ -98,7 +110,7 @@ function parseTimeWindow(segment: string): ParsedWindow {
 
     const startMin = toMinutes24(h1, m1, mer1);
     let endMin = toMinutes24(h2, m2, mer2);
-    if (endMin <= startMin) endMin = Math.min(1380, startMin + 90);
+    if (endMin <= startMin) endMin = Math.min(CLOSURE_MAX, startMin + 90);
     return { startMin, endMin, explicit: true };
   }
 
@@ -130,7 +142,7 @@ function parseTimeWindow(segment: string): ParsedWindow {
     const startMin = toMinutes24(rawHour, rawMin, m[3]);
     return {
       startMin,
-      endMin: Math.min(1380, startMin + durationMin),
+      endMin: Math.min(CLOSURE_MAX, startMin + durationMin),
       explicit: true,
     };
   }
@@ -138,6 +150,12 @@ function parseTimeWindow(segment: string): ParsedWindow {
   return { startMin: 480, endMin: 480 + durationMin, explicit: false };
 }
 
+/**
+ * Compiles free-text crisis descriptions into closure windows.
+ *
+ * @param text - Plain-English disruption description.
+ * @returns Closures (possibly empty) and a human-readable summary line.
+ */
 export function parseCrisisDeterministic(text: string): {
   closures: AirportClosure[];
   summary: string;

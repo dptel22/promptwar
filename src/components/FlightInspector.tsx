@@ -1,5 +1,11 @@
+/**
+ * Flight inspection drawer displaying turnaround slack, 600-minute crew duty
+ * utilization, clickable causal domino hops, passenger connections, and Escape close.
+ */
+
 "use client";
 
+import { useEffect } from "react";
 import {
   ArrowRight,
   CheckCircle2,
@@ -9,30 +15,40 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { formatHHMM } from "@/lib/sim/engine";
+import { MAX_CREW_DUTY_MIN, formatHHMM } from "@/lib/sim/constants";
 import type { SimulatedConnection, SimulatedFlight } from "@/lib/sim/types";
 
-interface FlightInspectorProps {
+/** Props accepted by `FlightInspector`. */
+export interface FlightInspectorProps {
   flight: SimulatedFlight;
   connections: SimulatedConnection[];
   onSelectFlight: (flightId: string) => void;
   onClose: () => void;
 }
 
+/**
+ * Renders live telemetry and causal lineage for the selected flight leg.
+ */
 export function FlightInspector({
   flight,
   connections,
   onSelectFlight,
   onClose,
 }: FlightInspectorProps) {
-  const relatedConnections = connections.filter(
-    (c) =>
-      c.from_flight === flight.flight_id || c.to_flight === flight.flight_id
-  );
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
 
+  const relatedConnections = connections.filter(
+    (c) => c.from_flight === flight.flight_id || c.to_flight === flight.flight_id
+  );
   const dutyUsedPct = Math.min(
     100,
-    Math.max(0, Math.round((flight.crewProjectedDutyMin / 600) * 100))
+    Math.max(0, Math.round((flight.crewProjectedDutyMin / MAX_CREW_DUTY_MIN) * 100))
   );
 
   return (
@@ -43,9 +59,7 @@ export function FlightInspector({
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-mono text-sm font-bold text-[#0F172A]">
-              {flight.flight_id}
-            </span>
+            <span className="font-mono text-sm font-bold text-[#0F172A]">{flight.flight_id}</span>
             <span className="rounded-sm border border-[#E6EBF2] bg-[#FBFCFD] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[#475569]">
               {flight.activeTailId} · Leg {flight.leg_order}
             </span>
@@ -53,15 +67,12 @@ export function FlightInspector({
           <div className="mt-1 flex items-center gap-1.5 font-mono text-xs text-[#475569]">
             <span className="font-semibold text-[#0F172A]">{flight.origin}</span>
             <ArrowRight className="h-3 w-3" aria-hidden="true" />
-            <span className="font-semibold text-[#0F172A]">
-              {flight.destination}
-            </span>
+            <span className="font-semibold text-[#0F172A]">{flight.destination}</span>
             <span>·</span>
             <Users className="h-3 w-3" aria-hidden="true" />
             <span>{flight.pax} pax</span>
           </div>
         </div>
-
         <button
           type="button"
           onClick={onClose}
@@ -72,38 +83,24 @@ export function FlightInspector({
         </button>
       </div>
 
-      {/* Status Row */}
       <div className="mt-3 flex items-center justify-between border-y border-[#E6EBF2] py-2">
         <StatusTag flight={flight} />
         <div className="text-right font-mono text-[11px] tabular-nums">
-          <div className="text-[#475569]">
-            Sched {flight.dep}–{flight.arr}
-          </div>
+          <div className="text-[#475569]">Sched {flight.dep}–{flight.arr}</div>
           {flight.status !== "CANCELLED" && (
-            <div
-              className={
-                flight.delayMin > 0
-                  ? "font-semibold text-[#B45309]"
-                  : "font-semibold text-[#047857]"
-              }
-            >
-              Actual {formatHHMM(flight.actualDepMin)}–
-              {formatHHMM(flight.actualArrMin)}
+            <div className={flight.delayMin > 0 ? "font-semibold text-[#B45309]" : "font-semibold text-[#047857]"}>
+              Actual {formatHHMM(flight.actualDepMin)}–{formatHHMM(flight.actualArrMin)}
             </div>
           )}
         </div>
       </div>
 
-      {/* Turnaround Buffer Absorption */}
       {flight.scheduledTurnaroundMin !== null && (
         <div className="mt-2.5 rounded-lg border border-[#E6EBF2] bg-[#FBFCFD] p-2.5">
           <div className="flex items-center justify-between text-[11px]">
-            <span className="font-medium text-[#475569]">
-              Turnaround slack (30m min)
-            </span>
+            <span className="font-medium text-[#475569]">Turnaround slack (30m min)</span>
             <span className="font-mono tabular-nums text-[#0F172A]">
-              {flight.scheduledTurnaroundMin}m ({flight.turnaroundBufferMin}m
-              slack)
+              {flight.scheduledTurnaroundMin}m ({flight.turnaroundBufferMin}m slack)
             </span>
           </div>
           {flight.bufferAbsorbedMin > 0 ? (
@@ -113,8 +110,7 @@ export function FlightInspector({
             </p>
           ) : (
             <p className="mt-1 font-mono text-[11px] text-[#475569]">
-              {flight.delayMin > 0 &&
-              flight.primaryReason === "LATE_INBOUND_AIRCRAFT"
+              {flight.delayMin > 0 && flight.primaryReason === "LATE_INBOUND_AIRCRAFT"
                 ? `Buffer exhausted — +${flight.delayMin}m passed downstream`
                 : `${flight.turnaroundBufferMin}m slack available`}
             </p>
@@ -122,41 +118,27 @@ export function FlightInspector({
         </div>
       )}
 
-      {/* Crew Duty Clock */}
       <div className="mt-2.5 rounded-lg border border-[#E6EBF2] bg-[#FBFCFD] p-2.5">
         <div className="flex items-center justify-between text-[11px]">
           <span className="font-medium text-[#475569]">
-            Crew {flight.activeCrewId} duty (600m max)
+            Crew {flight.activeCrewId} duty ({MAX_CREW_DUTY_MIN}m max)
           </span>
-          <span
-            className={`font-mono font-semibold tabular-nums ${
-              flight.crewOvertimeMin > 0 ? "text-[#B91C1C]" : "text-[#0F172A]"
-            }`}
-          >
-            {flight.crewProjectedDutyMin}m / 600m
+          <span className={`font-mono font-semibold tabular-nums ${flight.crewOvertimeMin > 0 ? "text-[#B91C1C]" : "text-[#0F172A]"}`}>
+            {flight.crewProjectedDutyMin}m / {MAX_CREW_DUTY_MIN}m
             {flight.crewOvertimeMin > 0 ? ` (+${flight.crewOvertimeMin}m)` : ""}
           </span>
         </div>
         <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[#E6EBF2]">
           <div
-            className={`h-full ${
-              flight.crewOvertimeMin > 0
-                ? "bg-[#DC2626]"
-                : dutyUsedPct >= 92
-                  ? "bg-[#D97706]"
-                  : "bg-[#2B79FB]"
-            }`}
+            className={`h-full ${flight.crewOvertimeMin > 0 ? "bg-[#B91C1C]" : dutyUsedPct >= 92 ? "bg-[#D97706]" : "bg-[#2B79FB]"}`}
             style={{ width: `${dutyUsedPct}%` }}
           />
         </div>
       </div>
 
-      {/* Causal Domino Lineage */}
       {flight.causeChain.length > 0 && (
         <div className="mt-3">
-          <div className="text-xs font-semibold text-[#0F172A]">
-            Causal domino chain
-          </div>
+          <div className="text-xs font-semibold text-[#0F172A]">Causal domino chain</div>
           <ol className="mt-1.5 space-y-1.5">
             {flight.causeChain.map((step, idx) => (
               <li key={`${step.flightId}-${idx}`}>
@@ -166,18 +148,10 @@ export function FlightInspector({
                   className="w-full cursor-pointer rounded-md border border-[#E6EBF2] bg-[#FBFCFD] px-2.5 py-1.5 text-left transition-colors duration-150 hover:border-[#2B79FB]/40 hover:bg-[#EFF6FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
                 >
                   <div className="flex items-center justify-between font-mono text-[11px]">
-                    <span className="font-semibold text-[#1D4ED8]">
-                      Hop {idx + 1}: {step.flightId} ({step.airportId})
-                    </span>
-                    {step.delayMin > 0 && (
-                      <span className="font-semibold text-[#B91C1C]">
-                        +{step.delayMin}m
-                      </span>
-                    )}
+                    <span className="font-semibold text-[#1D4ED8]">Hop {idx + 1}: {step.flightId} ({step.airportId})</span>
+                    {step.delayMin > 0 && <span className="font-semibold text-[#B91C1C]">+{step.delayMin}m</span>}
                   </div>
-                  <p className="mt-0.5 text-[11px] leading-snug text-[#475569]">
-                    {step.summary}
-                  </p>
+                  <p className="mt-0.5 text-[11px] leading-snug text-[#475569]">{step.summary}</p>
                 </button>
               </li>
             ))}
@@ -185,34 +159,15 @@ export function FlightInspector({
         </div>
       )}
 
-      {/* Passenger Connections */}
       {relatedConnections.length > 0 && (
         <div className="mt-3">
-          <div className="text-xs font-semibold text-[#0F172A]">
-            Passenger connections
-          </div>
+          <div className="text-xs font-semibold text-[#0F172A]">Passenger connections</div>
           <div className="mt-1.5 space-y-1">
             {relatedConnections.map((cx) => (
-              <div
-                key={cx.connection_id}
-                className="flex items-center justify-between rounded-md border border-[#E6EBF2] bg-[#FBFCFD] px-2 py-1 text-[11px]"
-              >
-                <span className="font-mono text-[#0F172A]">
-                  {cx.connection_id}: {cx.from_flight}→{cx.to_flight} (
-                  {cx.passengers}p)
-                </span>
-                <span
-                  className={`font-mono font-semibold ${
-                    cx.status === "INTACT"
-                      ? "text-[#047857]"
-                      : "text-[#B91C1C]"
-                  }`}
-                >
-                  {cx.status === "INTACT"
-                    ? `${cx.actualConnectMin}m OK`
-                    : cx.status === "BROKEN_GROUNDED"
-                      ? "GROUNDED"
-                      : `-${cx.shortfallMin}m MISSED`}
+              <div key={cx.connection_id} className="flex items-center justify-between rounded-md border border-[#E6EBF2] bg-[#FBFCFD] px-2 py-1 text-[11px]">
+                <span className="font-mono text-[#0F172A]">{cx.connection_id}: {cx.from_flight}→{cx.to_flight} ({cx.passengers}p)</span>
+                <span className={`font-mono font-semibold ${cx.status === "INTACT" ? "text-[#047857]" : "text-[#B91C1C]"}`}>
+                  {cx.status === "INTACT" ? `${cx.actualConnectMin}m OK` : cx.status === "BROKEN_GROUNDED" ? "GROUNDED" : `-${cx.shortfallMin}m MISSED`}
                 </span>
               </div>
             ))}

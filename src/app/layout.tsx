@@ -1,3 +1,7 @@
+/**
+ * Root App Router layout configuring typography variables, favicon, and keyboard skip link.
+ */
+
 import type { Metadata } from "next";
 import {
   Bricolage_Grotesque,
@@ -43,7 +47,13 @@ export default function RootLayout({
       lang="en"
       className={`${bricolage.variable} ${ibmPlexSans.variable} ${jetbrainsMono.variable}`}
     >
-      <body className="min-h-screen bg-[#F8FAFC] text-[#0F172A] antialiased selection:bg-[#2563EB]/15 selection:text-[#0F172A]">
+      <body className="min-h-screen bg-[#FBFCFD] text-[#0F172A] antialiased selection:bg-[#2B79FB]/15 selection:text-[#0F172A]">
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-[#1D4ED8] focus:px-3 focus:py-2 focus:text-xs focus:font-semibold focus:text-white focus:outline-none focus:ring-2 focus:ring-[#2B79FB]"
+        >
+          Skip to main content
+        </a>
         {children}
       </body>
     </html>

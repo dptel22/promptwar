@@ -1,3 +1,8 @@
+/**
+ * Segmented top telemetry header providing scenario preset switching, Simple/Advanced
+ * mode toggle, draggable storm cell, Crisis modal trigger, undo/reset, and AI Helper toggle.
+ */
+
 "use client";
 
 import Link from "next/link";
@@ -11,145 +16,13 @@ import {
   Terminal,
   Undo2,
 } from "lucide-react";
-import { parseHHMM } from "@/lib/sim/engine";
+import { SCENARIO_PRESETS, type ScenarioPreset } from "@/lib/sim/presets";
 import type { AirportClosure } from "@/lib/sim/types";
 
-export interface ScenarioPreset {
-  id: string;
-  label: string;
-  clockMin: number;
-  closures: AirportClosure[];
-}
+export { SCENARIO_PRESETS, type ScenarioPreset };
 
-export const SCENARIO_PRESETS: ScenarioPreset[] = [
-  {
-    id: "bom-90m",
-    label: "BOM 90m Thunderstorm (07:30–09:00)",
-    clockMin: parseHHMM("08:35"),
-    closures: [
-      {
-        id: "preset-bom-90",
-        airportId: "BOM",
-        startMin: parseHHMM("07:30"),
-        endMin: parseHHMM("09:00"),
-        label: "BOM Thunderstorm",
-      },
-    ],
-  },
-  {
-    id: "bom-20m-buffer",
-    label: "BOM 20m Buffer Test (07:30–07:50)",
-    clockMin: parseHHMM("08:30"),
-    closures: [
-      {
-        id: "preset-bom-20",
-        airportId: "BOM",
-        startMin: parseHHMM("07:30"),
-        endMin: parseHHMM("07:50"),
-        label: "BOM Minor Hold",
-      },
-    ],
-  },
-  {
-    id: "bom-110m-cascade",
-    label: "BOM 110m Cascade (07:30–09:20)",
-    clockMin: parseHHMM("09:30"),
-    closures: [
-      {
-        id: "preset-bom-110",
-        airportId: "BOM",
-        startMin: parseHHMM("07:30"),
-        endMin: parseHHMM("09:20"),
-        label: "BOM Severe Storm",
-      },
-    ],
-  },
-  {
-    id: "del-60m-fog",
-    label: "DEL 60m Winter Fog (11:15–12:15)",
-    clockMin: parseHHMM("11:35"),
-    closures: [
-      {
-        id: "preset-del-fog",
-        airportId: "DEL",
-        startMin: parseHHMM("11:15"),
-        endMin: parseHHMM("12:15"),
-        label: "DEL Winter Fog",
-      },
-    ],
-  },
-  {
-    id: "gau-spoke",
-    label: "GAU Spoke Isolation (17:00–19:45)",
-    clockMin: parseHHMM("18:15"),
-    closures: [
-      {
-        id: "preset-gau",
-        airportId: "GAU",
-        startMin: parseHHMM("17:00"),
-        endMin: parseHHMM("19:45"),
-        label: "GAU Fog Closure",
-      },
-    ],
-  },
-  {
-    id: "hyd-75m",
-    label: "HYD 75m Squall (12:00–13:15)",
-    clockMin: parseHHMM("12:45"),
-    closures: [
-      {
-        id: "preset-hyd",
-        airportId: "HYD",
-        startMin: parseHHMM("12:00"),
-        endMin: parseHHMM("13:15"),
-        label: "HYD Squall",
-      },
-    ],
-  },
-  {
-    id: "bom-pm-crew",
-    label: "BOM PM Crew Cutoff (15:00–16:30)",
-    clockMin: parseHHMM("16:40"),
-    closures: [
-      {
-        id: "preset-bom-pm",
-        airportId: "BOM",
-        startMin: parseHHMM("15:00"),
-        endMin: parseHHMM("16:30"),
-        label: "BOM PM Storm",
-      },
-    ],
-  },
-  {
-    id: "bom-del-dual",
-    label: "BOM + DEL Dual Hub Crisis",
-    clockMin: parseHHMM("08:35"),
-    closures: [
-      {
-        id: "preset-dual-bom",
-        airportId: "BOM",
-        startMin: parseHHMM("07:30"),
-        endMin: parseHHMM("09:00"),
-        label: "BOM Storm",
-      },
-      {
-        id: "preset-dual-del",
-        airportId: "DEL",
-        startMin: parseHHMM("15:00"),
-        endMin: parseHHMM("16:30"),
-        label: "DEL Storm",
-      },
-    ],
-  },
-  {
-    id: "clear-skies",
-    label: "Clear Skies (Nominal Schedule)",
-    clockMin: parseHHMM("09:15"),
-    closures: [],
-  },
-];
-
-interface TopTelemetryBarProps {
+/** Props accepted by `TopTelemetryBar`. */
+export interface TopTelemetryBarProps {
   activePresetId: string;
   closures: AirportClosure[];
   viewMode: "simple" | "advanced";
@@ -167,6 +40,9 @@ interface TopTelemetryBarProps {
   onStormDragState: (dragging: boolean) => void;
 }
 
+/**
+ * Renders the single-row segmented OCC control bar above the radar canvas.
+ */
 export function TopTelemetryBar({
   activePresetId,
   closures,
@@ -186,7 +62,6 @@ export function TopTelemetryBar({
 }: TopTelemetryBarProps) {
   return (
     <header className="flex h-14 w-full shrink-0 items-center justify-between border-b border-[#E6EBF2] bg-[#FFFFFF]">
-      {/* Left Cell: Brand & Minimal Route Navigation */}
       <div className="flex h-full items-center gap-3 px-3 lg:px-4">
         <Link
           href="/"
@@ -226,9 +101,7 @@ export function TopTelemetryBar({
         </nav>
       </div>
 
-      {/* Right Segmented Hairline Cells */}
       <div className="flex h-full items-center divide-x divide-[#E6EBF2] border-l border-[#E6EBF2]">
-        {/* Scenario Picker, Complexity Switch & Drag Storm */}
         <div className="flex h-full items-center gap-2 px-3">
           <label htmlFor="scenario-select" className="sr-only">
             Select disruption scenario preset
@@ -301,7 +174,6 @@ export function TopTelemetryBar({
           </div>
         </div>
 
-        {/* Actions Cell: Crisis, Undo, Reset, AI Dispatcher */}
         <div className="flex h-full items-center gap-1.5 px-3">
           <button
             type="button"
@@ -345,7 +217,7 @@ export function TopTelemetryBar({
             }`}
           >
             <Cpu className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>AI Dispatcher</span>
+            <span>AI Helper</span>
             {candidateCount > 0 && (
               <span className="rounded-full bg-[#EFF6FF] px-1.5 py-0.2 font-mono text-[10px] font-bold text-[#1D4ED8]">
                 {candidateCount}
@@ -354,7 +226,6 @@ export function TopTelemetryBar({
           </button>
         </div>
 
-        {/* Far-Right Segmented Expand / Collapse Cell */}
         {onToggleFullscreenMap && (
           <div className="flex h-full items-center px-2">
             <button
@@ -362,7 +233,7 @@ export function TopTelemetryBar({
               onClick={onToggleFullscreenMap}
               aria-label="Toggle full-bleed map"
               aria-pressed={isMapExpanded}
-              title={isMapExpanded ? "Show AI Dispatcher" : "Expand map"}
+              title={isMapExpanded ? "Show AI Helper" : "Expand map"}
               className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-[#475569] transition-colors duration-150 hover:bg-[#F8FAFC] hover:text-[#0F172A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
             >
               {isMapExpanded ? (

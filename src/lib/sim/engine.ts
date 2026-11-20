@@ -1,593 +1,235 @@
-import rawDataset from "../../data/domino-sky-dataset.json";
+/**
+ * Deterministic network cascade engine for the Domino Sky schedule.
+ *
+ * `simulateNetwork` replays the single-day schedule tail by tail: weather
+ * closures push departures/arrivals, late inbound aircraft eat turnaround buffer
+ * and cascade down the rotation, crews are checked against the 600-minute duty
+ * window, and recovery actions (cancel, spare swap, connection hold) rewrite the
+ * rotation. Cross-tail connection holds depend on other tails, so the whole
+ * network is iterated to a fixed point (usually 2-3 passes).
+ *
+ * Same inputs always yield the same output; there is no randomness or I/O.
+ *
+ * Related modules: `closure-holds` (airport closures), `tail-state` (crew duty,
+ * spare takeover), `cause-chain` (domino lineage), `metrics` (connections + KPIs).
+ */
+
+import { parseActionMaps, type ActionMaps } from "./action-maps";
+import { buildCauseChain } from "./cause-chain";
+import { applyClosureHolds } from "./closure-holds";
+import { DATASET, formatHHMM, getAirportById, parseHHMM } from "./constants";
+import { SPARES_BY_ID, TAIL_CHAINS, type TailChain } from "./dataset-index";
+import { aggregateNetworkMetrics, evaluateConnections } from "./metrics";
+import {
+  applyCrewLegality,
+  buildCrewRecord,
+  createTailState,
+  takeOverWithSpare,
+  type TailState,
+} from "./tail-state";
+import { applyConnectionHold, propagateTurnaround } from "./turnaround";
 import type {
   AirportClosure,
-  CauseStep,
-  ConnectionStatus,
-  DelayReason,
-  DominoDataset,
   Flight,
-  FlightStatus,
-  NetworkMetrics,
   RecoveryAction,
-  SimulatedConnection,
   SimulatedCrew,
   SimulatedFlight,
   SimulationResult,
 } from "./types";
 
-export const DATASET: DominoDataset = rawDataset as DominoDataset;
+export { DATASET, formatHHMM, getAirportById, parseHHMM };
+export { applyClosureHolds, buildCauseChain, parseActionMaps };
 
-const AIRPORTS_BY_ID = new Map(DATASET.airports.map((a) => [a.id, a]));
-const FLIGHTS_BY_ID = new Map(DATASET.flights.map((f) => [f.flight_id, f]));
-const SPARES_BY_ID = new Map(DATASET.spare_aircraft.map((s) => [s.tail_id, s]));
-const CREWS_BY_TAIL = new Map(DATASET.crews.map((c) => [c.tail_id, c]));
-const CONNECTIONS_BY_ID = new Map(DATASET.connections.map((c) => [c.connection_id, c]));
+/** Simulated flights keyed by `flight_id`. */
+type FlightMap = Record<string, SimulatedFlight>;
 
-const TAIL_FLIGHTS: Array<{ tailId: string; flights: Flight[] }> = (() => {
-  const grouped = new Map<string, Flight[]>();
-  for (const flight of DATASET.flights) {
-    const arr = grouped.get(flight.tail_id);
-    if (arr) arr.push(flight);
-    else grouped.set(flight.tail_id, [flight]);
+/** Immutable inputs shared by every leg simulated in one `simulateNetwork` call. */
+export interface SimContext {
+  closures: AirportClosure[];
+  maps: ActionMaps;
+}
+
+function buildCancelledFlight(
+  f: Flight,
+  st: TailState,
+  scheduledDepMin: number,
+  scheduledArrMin: number
+): SimulatedFlight {
+  return {
+    ...f,
+    activeTailId: st.activeTailId,
+    activeCrewId: st.activeCrewId,
+    isSpareOperated: st.isSpareOperated,
+    scheduledDepMin,
+    scheduledArrMin,
+    actualDepMin: scheduledDepMin,
+    actualArrMin: scheduledArrMin,
+    delayMin: 0,
+    holdingStartMin: null,
+    holdingEndMin: null,
+    scheduledTurnaroundMin: st.prevLeg
+      ? scheduledDepMin - st.prevLeg.scheduledArrMin
+      : f.turnaround_before_min,
+    turnaroundBufferMin: 0,
+    bufferAbsorbedMin: 0,
+    crewDutyStartMin: st.dutyStartMin,
+    crewDutyLimitMin: st.dutyLimitMin,
+    crewProjectedDutyMin: 0,
+    crewOvertimeMin: 0,
+    status: "CANCELLED",
+    primaryReason: "RECOVERY_CANCELLED",
+    causeFlightId: null,
+    rootCauseAirportId: null,
+    causeChain: [],
+  };
+}
+
+function simulateLeg(
+  f: Flight,
+  st: TailState,
+  ctx: SimContext,
+  prev: FlightMap
+): SimulatedFlight {
+  const scheduledDepMin = parseHHMM(f.dep);
+  const scheduledArrMin = parseHHMM(f.arr);
+
+  if (ctx.maps.cancelledIds.has(f.flight_id)) {
+    return buildCancelledFlight(f, st, scheduledDepMin, scheduledArrMin);
   }
-  return Array.from(grouped.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([tailId, flights]) => ({
-      tailId,
-      flights: [...flights].sort((x, y) => x.leg_order - y.leg_order),
-    }));
-})();
 
-export function parseHHMM(hhmm: string): number {
-  const [hh, mm] = hhmm.split(":").map(Number);
-  return hh * 60 + mm;
+  const spare = SPARES_BY_ID.get(ctx.maps.spareSwapByFlightId.get(f.flight_id) ?? "");
+  if (spare && spare.base === f.origin) {
+    takeOverWithSpare(st, spare, f, scheduledDepMin, ctx.closures);
+  }
+
+  // Order matters: turnaround and holds first, closures last, so late aircraft
+  // can never depart from or land at a closed airport.
+  const turn = applyConnectionHold(
+    ctx.maps.holdByFlightId.get(f.flight_id),
+    propagateTurnaround(f, st.prevLeg, scheduledDepMin),
+    prev
+  );
+  const timing = applyClosureHolds(f, turn.readyDep, turn.cause, ctx.closures);
+  const delayMin = Math.max(0, timing.actualArrMin - scheduledArrMin);
+  const legal = applyCrewLegality(st, f, timing.actualArrMin, delayMin, timing.cause);
+
+  return {
+    ...f,
+    activeTailId: st.activeTailId,
+    activeCrewId: st.activeCrewId,
+    isSpareOperated: st.isSpareOperated,
+    scheduledDepMin,
+    scheduledArrMin,
+    actualDepMin: timing.actualDepMin,
+    actualArrMin: timing.actualArrMin,
+    delayMin,
+    holdingStartMin: timing.holdingStartMin,
+    holdingEndMin: timing.holdingEndMin,
+    scheduledTurnaroundMin: turn.scheduledTurnaroundMin,
+    turnaroundBufferMin: turn.turnaroundBufferMin,
+    bufferAbsorbedMin: turn.bufferAbsorbedMin,
+    crewDutyStartMin: st.dutyStartMin,
+    crewDutyLimitMin: st.dutyLimitMin,
+    crewProjectedDutyMin: timing.actualArrMin - st.dutyStartMin,
+    crewOvertimeMin: Math.max(0, timing.actualArrMin - st.dutyLimitMin),
+    status: legal.status,
+    primaryReason: legal.cause.reason,
+    causeFlightId: legal.cause.causeFlightId,
+    rootCauseAirportId: legal.cause.rootCauseAirportId,
+    causeChain: [],
+  };
 }
 
-export function formatHHMM(minutes: number): string {
-  const clamped = Math.max(0, Math.round(minutes));
-  const hh = Math.floor(clamped / 60) % 24;
-  const mm = clamped % 60;
-  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
-}
-
-export function getAirportById(airportId: string) {
-  return AIRPORTS_BY_ID.get(airportId);
-}
-
-function findActiveClosure(
-  closures: AirportClosure[],
-  airportId: string,
-  minute: number
-): AirportClosure | undefined {
-  return closures.find(
-    (c) => c.airportId === airportId && minute >= c.startMin && minute < c.endMin
+function legChanged(old: SimulatedFlight | undefined, leg: SimulatedFlight): boolean {
+  return (
+    !old ||
+    old.actualDepMin !== leg.actualDepMin ||
+    old.actualArrMin !== leg.actualArrMin ||
+    old.status !== leg.status
   );
 }
 
-function buildCauseChain(
-  flight: SimulatedFlight,
-  byId: Record<string, SimulatedFlight>
-): CauseStep[] {
-  const chain: CauseStep[] = [];
-  const visited = new Set<string>();
-  let curr: SimulatedFlight | undefined = flight;
+/**
+ * Simulates every leg of one tail rotation, writing results into `nextById`.
+ *
+ * @param chain - Tail rotation with its crew.
+ * @param ctx - Closures and recovery lookup tables.
+ * @param prev - Previous fixed-point pass (for cross-tail holds).
+ * @param nextById - Output map receiving this pass's simulated legs.
+ * @returns Crew record plus whether any leg differs from the previous pass.
+ */
+export function simulateTailChain(
+  chain: TailChain,
+  ctx: SimContext,
+  prev: FlightMap,
+  nextById: FlightMap
+): { crew: SimulatedCrew; changed: boolean } {
+  const st = createTailState(chain);
+  let changed = false;
 
-  while (curr && !visited.has(curr.flight_id)) {
-    visited.add(curr.flight_id);
-    if (curr.primaryReason === "NONE") break;
-
-    let summary = "";
-    switch (curr.primaryReason) {
-      case "PRIMARY_WEATHER_DEP_HOLD":
-        summary = `${curr.origin} closed — held departure until ${formatHHMM(curr.actualDepMin)} (+${curr.delayMin}m)`;
-        break;
-      case "PRIMARY_WEATHER_ARR_HOLD":
-        summary = curr.holdingStartMin !== null
-          ? `${curr.destination} closed — ATC holding orbit until ${formatHHMM(curr.actualArrMin)} (+${curr.delayMin}m)`
-          : `${curr.destination} closed — GDP hold until ${formatHHMM(curr.actualArrMin)} (+${curr.delayMin}m)`;
-        break;
-      case "LATE_INBOUND_AIRCRAFT":
-        summary = `Late inbound ${curr.causeFlightId ?? curr.activeTailId} (${curr.bufferAbsorbedMin > 0 ? `absorbed ${curr.bufferAbsorbedMin}m, ` : ""}+${curr.delayMin}m)`;
-        break;
-      case "CONNECTION_HOLD":
-        summary = `Held for inbound connection ${curr.causeFlightId ?? ""} (+${curr.delayMin}m)`;
-        break;
-      case "CREW_DUTY_BREACH":
-        summary = `${curr.activeCrewId} exceeded 600m duty limit by ${curr.crewOvertimeMin}m`;
-        break;
-      case "RECOVERY_CANCELLED":
-        summary = `Cancelled as recovery action`;
-        break;
-    }
-
-    chain.unshift({
-      flightId: curr.flight_id,
-      tailId: curr.activeTailId,
-      airportId:
-        curr.primaryReason === "PRIMARY_WEATHER_ARR_HOLD"
-          ? curr.destination
-          : curr.origin,
-      reason: curr.primaryReason,
-      delayMin: curr.delayMin,
-      summary,
-    });
-
-    if (
-      curr.causeFlightId &&
-      curr.causeFlightId !== curr.flight_id &&
-      byId[curr.causeFlightId]
-    ) {
-      curr = byId[curr.causeFlightId];
-    } else {
-      break;
-    }
+  for (const f of chain.flights) {
+    const leg = simulateLeg(f, st, ctx, prev);
+    nextById[f.flight_id] = leg;
+    // A breached or cancelled leg never operates, so it cannot feed a turnaround.
+    if (leg.status !== "CREW_BREACH" && leg.status !== "CANCELLED") st.prevLeg = leg;
+    changed = legChanged(prev[f.flight_id], leg) || changed;
   }
-
-  return chain;
+  return { crew: buildCrewRecord(chain, st), changed };
 }
 
+/** Closures usable by the engine: positive window at a known airport, sorted by start. */
+function sanitizeClosures(closures: AirportClosure[]): AirportClosure[] {
+  return closures
+    .filter((c) => c.endMin > c.startMin && getAirportById(c.airportId) !== undefined)
+    .map((c) => ({ ...c }))
+    .sort((a, b) => a.startMin - b.startMin);
+}
+
+/**
+ * Simulates the full 70-flight network under closures and recovery actions.
+ *
+ * @param closures - Airport closure windows (invalid ones are dropped).
+ * @param actions - Recovery actions to apply (cancel / spare swap / hold).
+ * @returns Flights, connections, crews and aggregate metrics.
+ */
 export function simulateNetwork(
   closures: AirportClosure[],
   actions: RecoveryAction[] = []
 ): SimulationResult {
-  const validClosures = closures
-    .filter((c) => c.endMin > c.startMin && AIRPORTS_BY_ID.has(c.airportId))
-    .map((c) => ({ ...c }))
-    .sort((a, b) => a.startMin - b.startMin);
+  const ctx: SimContext = {
+    closures: sanitizeClosures(closures),
+    maps: parseActionMaps(actions),
+  };
 
-  const minTurnaround = DATASET.meta.min_turnaround_minutes;
-  const cancelledIds = new Set<string>();
-  const spareSwapByFlightId = new Map<string, string>();
-  const usedSpareIds = new Set<string>();
-  const holdByFlightId = new Map<
-    string,
-    Extract<RecoveryAction, { type: "HOLD_CONNECTION" }>
-  >();
+  let flightsById: FlightMap = {};
+  let crews: SimulatedCrew[] = [];
 
-  for (const action of actions) {
-    if (action.type === "CANCEL_FLIGHT") {
-      for (const fid of action.flightIds) cancelledIds.add(fid);
-    } else if (action.type === "SWAP_SPARE") {
-      const spare = SPARES_BY_ID.get(action.spareTailId);
-      const targetFlight = FLIGHTS_BY_ID.get(action.targetFlightId);
-      if (
-        spare &&
-        targetFlight &&
-        spare.base === targetFlight.origin &&
-        !usedSpareIds.has(action.spareTailId)
-      ) {
-        usedSpareIds.add(action.spareTailId);
-        spareSwapByFlightId.set(action.targetFlightId, action.spareTailId);
-      }
-    } else if (action.type === "HOLD_CONNECTION") {
-      holdByFlightId.set(action.flightId, action);
-    }
-  }
-
-  let flightsById: Record<string, SimulatedFlight> = {};
-  let crewsState: SimulatedCrew[] = [];
-
-  // Fixed-point convergence loop (stabilizes in 2-3 passes for cross-tail connection holds)
+  // Fixed-point loop: cross-tail connection holds stabilise within 2-3 passes.
   for (let pass = 0; pass < 5; pass++) {
-    const prevSnapshot = flightsById;
-    const nextById: Record<string, SimulatedFlight> = {};
+    const nextById: FlightMap = {};
     const nextCrews: SimulatedCrew[] = [];
-    let changed = pass === 0;
-
-    for (const { tailId, flights } of TAIL_FLIGHTS) {
-      const baseCrew = CREWS_BY_TAIL.get(tailId)!;
-      let activeTailId = tailId;
-      let activeCrewId = baseCrew.crew_id;
-      let crewDutyStartMin = parseHHMM(baseCrew.duty_start);
-      let crewDutyLimitMin = crewDutyStartMin + baseCrew.max_duty_mins;
-      let crewBreached = false;
-      let crewBreachFlightId: string | null = null;
-      let crewMaxProjectedEnd = crewDutyStartMin;
-      let crewOvertime = 0;
-      let isSpareOperated = false;
-      let prevOperatedLeg: SimulatedFlight | null = null;
-
-      // Track original crew stats separately if a spare takes over mid-chain
-      let origCrewProjectedEnd = crewDutyStartMin;
-      let origCrewBreached = false;
-      let origCrewBreachFlightId: string | null = null;
-      let origCrewOvertime = 0;
-
-      for (const f of flights) {
-        const scheduledDepMin = parseHHMM(f.dep);
-        const scheduledArrMin = parseHHMM(f.arr);
-
-        // 1. Recovery cancellation check
-        if (cancelledIds.has(f.flight_id)) {
-          const simCancelled: SimulatedFlight = {
-            ...f,
-            activeTailId,
-            activeCrewId,
-            isSpareOperated,
-            scheduledDepMin,
-            scheduledArrMin,
-            actualDepMin: scheduledDepMin,
-            actualArrMin: scheduledArrMin,
-            delayMin: 0,
-            holdingStartMin: null,
-            holdingEndMin: null,
-            scheduledTurnaroundMin: prevOperatedLeg
-              ? scheduledDepMin - prevOperatedLeg.scheduledArrMin
-              : f.turnaround_before_min,
-            turnaroundBufferMin: 0,
-            bufferAbsorbedMin: 0,
-            crewDutyStartMin,
-            crewDutyLimitMin,
-            crewProjectedDutyMin: 0,
-            crewOvertimeMin: 0,
-            status: "CANCELLED",
-            primaryReason: "RECOVERY_CANCELLED",
-            causeFlightId: null,
-            rootCauseAirportId: null,
-            causeChain: [],
-          };
-          nextById[f.flight_id] = simCancelled;
-          continue;
-        }
-
-        // 2. Spare aircraft swap takeover check
-        const requestedSpareId = spareSwapByFlightId.get(f.flight_id);
-        if (requestedSpareId) {
-          const spare = SPARES_BY_ID.get(requestedSpareId);
-          if (spare && spare.base === f.origin) {
-            if (!isSpareOperated) {
-              origCrewProjectedEnd = crewMaxProjectedEnd;
-              origCrewBreached = crewBreached;
-              origCrewBreachFlightId = crewBreachFlightId;
-              origCrewOvertime = crewOvertime;
-            }
-            activeTailId = spare.tail_id;
-            activeCrewId = `RES-${spare.tail_id.slice(-2)}`;
-            isSpareOperated = true;
-            prevOperatedLeg = null;
-            crewBreached = false;
-            crewBreachFlightId = null;
-
-            let readyTakeover = Math.max(
-              scheduledDepMin,
-              parseHHMM(spare.available_from)
-            );
-            const originClosure = findActiveClosure(
-              validClosures,
-              f.origin,
-              readyTakeover
-            );
-            if (originClosure) readyTakeover = originClosure.endMin;
-
-            // Standby reserve crew starts 30m briefing before takeover departure
-            crewDutyStartMin = readyTakeover - 30;
-            crewDutyLimitMin = crewDutyStartMin + 600;
-            crewMaxProjectedEnd = crewDutyStartMin;
-            crewOvertime = 0;
-          }
-        }
-
-        // 3. Turnaround propagation & buffer absorption (evaluated BEFORE closures)
-        let readyDep = scheduledDepMin;
-        let primaryReason: DelayReason = "NONE";
-        let causeFlightId: string | null = null;
-        let rootCauseAirportId: string | null = null;
-        let scheduledTurnaroundMin: number | null = f.turnaround_before_min;
-        let turnaroundBufferMin = 0;
-        let bufferAbsorbedMin = 0;
-
-        if (prevOperatedLeg) {
-          scheduledTurnaroundMin = scheduledDepMin - prevOperatedLeg.scheduledArrMin;
-          turnaroundBufferMin = Math.max(0, scheduledTurnaroundMin - minTurnaround);
-          const inboundDelay = Math.max(
-            0,
-            prevOperatedLeg.actualArrMin - prevOperatedLeg.scheduledArrMin
-          );
-          bufferAbsorbedMin = Math.min(inboundDelay, turnaroundBufferMin);
-          const earliestFromInbound = prevOperatedLeg.actualArrMin + minTurnaround;
-
-          if (earliestFromInbound > scheduledDepMin) {
-            readyDep = earliestFromInbound;
-            primaryReason = "LATE_INBOUND_AIRCRAFT";
-            causeFlightId = prevOperatedLeg.flight_id;
-            rootCauseAirportId = prevOperatedLeg.rootCauseAirportId;
-          }
-        }
-
-        // 4. Connection hold recovery action (cross-tail safe via fixed-point loop, strictly capped at <= 45m)
-        const holdAction = holdByFlightId.get(f.flight_id);
-        if (holdAction) {
-          const cx = CONNECTIONS_BY_ID.get(holdAction.connectionId);
-          const inboundFlight = cx ? prevSnapshot[cx.from_flight] : undefined;
-          if (
-            cx &&
-            inboundFlight &&
-            inboundFlight.status !== "CANCELLED" &&
-            inboundFlight.status !== "CREW_BREACH"
-          ) {
-            const neededDep = inboundFlight.actualArrMin + cx.min_connect_minutes;
-            const maxHold = Math.min(45, Math.max(0, holdAction.holdMinutes));
-            const cappedNeededDep = Math.min(neededDep, readyDep + maxHold);
-            if (cappedNeededDep > readyDep) {
-              readyDep = cappedNeededDep;
-              primaryReason = "CONNECTION_HOLD";
-              causeFlightId = inboundFlight.flight_id;
-              rootCauseAirportId = inboundFlight.rootCauseAirportId;
-            }
-          }
-        }
-
-        // 5. Airport closure holds (evaluated AFTER turnaround so late flights cannot enter/leave closed hubs)
-        let actualDepMin = readyDep;
-        let actualArrMin = readyDep + f.block_minutes;
-        let holdingStartMin: number | null = null;
-        let holdingEndMin: number | null = null;
-
-        const maxClosureSteps = validClosures.length * 2 + 2;
-        for (let step = 0; step < maxClosureSteps; step++) {
-          const depClosure = findActiveClosure(validClosures, f.origin, actualDepMin);
-          if (depClosure) {
-            actualDepMin = depClosure.endMin;
-            actualArrMin = actualDepMin + f.block_minutes;
-            holdingStartMin = null;
-            holdingEndMin = null;
-            primaryReason = "PRIMARY_WEATHER_DEP_HOLD";
-            causeFlightId = f.flight_id;
-            rootCauseAirportId = f.origin;
-            continue;
-          }
-
-          const arrClosure = findActiveClosure(
-            validClosures,
-            f.destination,
-            actualArrMin
-          );
-          if (arrClosure) {
-            if (actualDepMin < arrClosure.startMin) {
-              // Flight already airborne before destination storm -> ATC holding orbit
-              holdingStartMin = actualDepMin + f.block_minutes;
-              holdingEndMin = arrClosure.endMin;
-              actualArrMin = arrClosure.endMin;
-            } else {
-              // Ground Delay Program at origin before departure
-              const gdpDep = Math.max(
-                actualDepMin,
-                arrClosure.endMin - f.block_minutes
-              );
-              actualDepMin = gdpDep;
-              actualArrMin = Math.max(
-                arrClosure.endMin,
-                actualDepMin + f.block_minutes
-              );
-              holdingStartMin = null;
-              holdingEndMin = null;
-            }
-            primaryReason = "PRIMARY_WEATHER_ARR_HOLD";
-            causeFlightId = f.flight_id;
-            rootCauseAirportId = f.destination;
-            continue;
-          }
-          break;
-        }
-
-        // 6. Crew duty legality (max 600 min from duty_start to actual arrival)
-        const crewProjectedDutyMin = actualArrMin - crewDutyStartMin;
-        const crewOvertimeMin = Math.max(0, actualArrMin - crewDutyLimitMin);
-        const delayMin = Math.max(0, actualArrMin - scheduledArrMin);
-
-        let status: FlightStatus;
-        if (crewBreached || actualArrMin > crewDutyLimitMin) {
-          crewBreached = true;
-          if (!crewBreachFlightId) crewBreachFlightId = f.flight_id;
-          crewOvertime = Math.max(crewOvertime, crewOvertimeMin);
-          crewMaxProjectedEnd = Math.max(crewMaxProjectedEnd, actualArrMin);
-          status = "CREW_BREACH";
-          primaryReason = "CREW_DUTY_BREACH";
-          // Keep upstream causeFlightId if already delayed by cascade so lineage stays intact
-          if (!causeFlightId && prevOperatedLeg) {
-            causeFlightId = prevOperatedLeg.flight_id;
-            rootCauseAirportId = prevOperatedLeg.rootCauseAirportId;
-          }
-        } else {
-          crewMaxProjectedEnd = Math.max(crewMaxProjectedEnd, actualArrMin);
-          status = delayMin > 0 ? "DELAYED" : "ON_TIME";
-        }
-
-        const simFlight: SimulatedFlight = {
-          ...f,
-          activeTailId,
-          activeCrewId,
-          isSpareOperated,
-          scheduledDepMin,
-          scheduledArrMin,
-          actualDepMin,
-          actualArrMin,
-          delayMin,
-          holdingStartMin,
-          holdingEndMin,
-          scheduledTurnaroundMin,
-          turnaroundBufferMin,
-          bufferAbsorbedMin,
-          crewDutyStartMin,
-          crewDutyLimitMin,
-          crewProjectedDutyMin,
-          crewOvertimeMin,
-          status,
-          primaryReason,
-          causeFlightId,
-          rootCauseAirportId,
-          causeChain: [],
-        };
-
-        nextById[f.flight_id] = simFlight;
-        if (status !== "CREW_BREACH") {
-          prevOperatedLeg = simFlight;
-        }
-
-        const prevFlight = prevSnapshot[f.flight_id];
-        if (
-          !prevFlight ||
-          prevFlight.actualDepMin !== simFlight.actualDepMin ||
-          prevFlight.actualArrMin !== simFlight.actualArrMin ||
-          prevFlight.status !== simFlight.status
-        ) {
-          changed = true;
-        }
-      }
-
-      if (isSpareOperated) {
-        nextCrews.push({
-          crewId: baseCrew.crew_id,
-          tailId: baseCrew.tail_id,
-          base: baseCrew.base,
-          dutyStartMin: parseHHMM(baseCrew.duty_start),
-          dutyLimitMin: parseHHMM(baseCrew.duty_start) + baseCrew.max_duty_mins,
-          projectedEndMin: origCrewProjectedEnd,
-          breached: origCrewBreached,
-          breachFlightId: origCrewBreachFlightId,
-          overtimeMin: origCrewOvertime,
-        });
-      } else {
-        nextCrews.push({
-          crewId: baseCrew.crew_id,
-          tailId: baseCrew.tail_id,
-          base: baseCrew.base,
-          dutyStartMin: crewDutyStartMin,
-          dutyLimitMin: crewDutyLimitMin,
-          projectedEndMin: crewMaxProjectedEnd,
-          breached: crewBreached,
-          breachFlightId: crewBreachFlightId,
-          overtimeMin: crewOvertime,
-        });
-      }
+    let changed = false;
+    for (const chain of TAIL_CHAINS) {
+      const res = simulateTailChain(chain, ctx, flightsById, nextById);
+      nextCrews.push(res.crew);
+      changed = changed || res.changed;
     }
-
     flightsById = nextById;
-    crewsState = nextCrews;
+    crews = nextCrews;
     if (!changed) break;
   }
 
-  // Populate causal domino chains in dataset order
-  const flights = DATASET.flights.map((f) => {
-    const sf = flightsById[f.flight_id];
-    sf.causeChain = buildCauseChain(sf, flightsById);
-    return sf;
-  });
-
-  // Evaluate all 21 passenger connections + inclusion-exclusion stranded totals
-  const connections: SimulatedConnection[] = DATASET.connections.map((cx) => {
-    const fromF = flightsById[cx.from_flight];
-    const toF = flightsById[cx.to_flight];
-    const fromGrounded =
-      fromF.status === "CANCELLED" || fromF.status === "CREW_BREACH";
-    const toGrounded =
-      toF.status === "CANCELLED" || toF.status === "CREW_BREACH";
-    const isDualGrounded = fromGrounded && toGrounded;
-
-    if (fromGrounded || toGrounded) {
-      return {
-        ...cx,
-        status: "BROKEN_GROUNDED" as ConnectionStatus,
-        actualConnectMin: null,
-        shortfallMin: cx.min_connect_minutes,
-        isDualGrounded,
-      };
-    }
-
-    const actualConnectMin = toF.actualDepMin - fromF.actualArrMin;
-    if (actualConnectMin < cx.min_connect_minutes) {
-      return {
-        ...cx,
-        status: "BROKEN_TIME" as ConnectionStatus,
-        actualConnectMin,
-        shortfallMin: cx.min_connect_minutes - actualConnectMin,
-        isDualGrounded: false,
-      };
-    }
-
-    return {
-      ...cx,
-      status: "INTACT" as ConnectionStatus,
-      actualConnectMin,
-      shortfallMin: 0,
-      isDualGrounded: false,
-    };
-  });
-
-  let onTimeFlights = 0;
-  let delayedFlights = 0;
-  let crewBreaches = 0;
-  let cancelledFlights = 0;
-  let totalDelayMinutes = 0;
-  let maxDelayMinutes = 0;
-  let groundedPax = 0;
-  const affectedAirports = new Set<string>();
-  const affectedTails = new Set<string>();
-  const sparesUsed = new Set<string>();
-
-  for (const f of flights) {
-    if (f.isSpareOperated) sparesUsed.add(f.activeTailId);
-    if (f.status === "ON_TIME") {
-      onTimeFlights++;
-    } else if (f.status === "DELAYED") {
-      delayedFlights++;
-      totalDelayMinutes += f.delayMin;
-      if (f.delayMin > maxDelayMinutes) maxDelayMinutes = f.delayMin;
-      affectedAirports.add(f.origin);
-      affectedAirports.add(f.destination);
-      affectedTails.add(f.tail_id);
-    } else if (f.status === "CREW_BREACH") {
-      crewBreaches++;
-      groundedPax += f.pax;
-      affectedAirports.add(f.origin);
-      affectedAirports.add(f.destination);
-      affectedTails.add(f.tail_id);
-    } else if (f.status === "CANCELLED") {
-      cancelledFlights++;
-      groundedPax += f.pax;
-      affectedAirports.add(f.origin);
-      affectedAirports.add(f.destination);
-      affectedTails.add(f.tail_id);
-    }
-  }
-
-  let brokenConnections = 0;
-  let dualGroundedOverlapPax = 0;
-  let missedConnectionPax = 0;
-  for (const cx of connections) {
-    if (cx.status !== "INTACT") brokenConnections++;
-    if (cx.isDualGrounded) dualGroundedOverlapPax += cx.passengers;
-    if (cx.status === "BROKEN_TIME") missedConnectionPax += cx.passengers;
-  }
-
-  const totalStrandedPax =
-    groundedPax - dualGroundedOverlapPax + missedConnectionPax;
-
-  const metrics: NetworkMetrics = {
-    totalFlights: flights.length,
-    onTimeFlights,
-    delayedFlights,
-    crewBreaches,
-    cancelledFlights,
-    totalDelayMinutes,
-    maxDelayMinutes,
-    brokenConnections,
-    groundedPax,
-    dualGroundedOverlapPax,
-    missedConnectionPax,
-    totalStrandedPax,
-    affectedAirports: Array.from(affectedAirports).sort(),
-    affectedTails: Array.from(affectedTails).sort(),
-    sparesUsed: Array.from(sparesUsed).sort(),
-  };
+  const flights = DATASET.flights.map((f) => flightsById[f.flight_id]);
+  for (const sf of flights) sf.causeChain = buildCauseChain(sf, flightsById);
+  const connections = evaluateConnections(flightsById);
 
   return {
-    closures: validClosures,
+    closures: ctx.closures,
     actions,
     flights,
     flightsById,
     connections,
-    crews: crewsState,
-    metrics,
+    crews,
+    metrics: aggregateNetworkMetrics(flights, connections),
   };
 }

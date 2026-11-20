@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MAX_API_BODY_BYTES } from "@/lib/sim/constants";
 import { verifyAiBriefing } from "@/lib/sim/verify-ai";
 import { POST as dispatchPost } from "./dispatch/route";
 import { POST as parseCrisisPost } from "./parse-crisis/route";
@@ -89,6 +90,42 @@ describe("Next.js API Route Handlers (/api/dispatch & /api/parse-crisis)", () =>
 
     const res = await parseCrisisPost(req);
     expect(res.status).toBe(400);
+  });
+
+  it("POST /api/dispatch rejects payloads over 32 KiB with HTTP 413", async () => {
+    const req = new Request("http://localhost/api/dispatch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ closures: [], padding: "x".repeat(MAX_API_BODY_BYTES + 1) }),
+    });
+
+    const res = await dispatchPost(req);
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toBe("Request body too large");
+  });
+
+  it("POST /api/parse-crisis rejects payloads over 32 KiB with HTTP 413", async () => {
+    const req = new Request("http://localhost/api/parse-crisis", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "x".repeat(MAX_API_BODY_BYTES + 1) }),
+    });
+
+    const res = await parseCrisisPost(req);
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toBe("Request body too large");
+  });
+
+  it("POST /api/dispatch responses are marked Cache-Control: no-store", async () => {
+    const req = new Request("http://localhost/api/dispatch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ closures: [] }),
+    });
+
+    const res = await dispatchPost(req);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
   it("POST /api/parse-crisis compiles '75 minute storm at HYD at 12:00' to exact HYD window", async () => {

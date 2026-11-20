@@ -1,11 +1,22 @@
+/**
+ * Floating airport closure configurator popover supporting IST start/end times,
+ * live duration slider, quick storm presets, and Escape-to-close keyboard handling.
+ */
+
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CloudLightning, Trash2, X } from "lucide-react";
-import { formatHHMM, parseHHMM } from "@/lib/sim/engine";
+import {
+  CLOSURE_MAX,
+  CLOSURE_MIN,
+  formatHHMM,
+  parseHHMM,
+} from "@/lib/sim/constants";
 import type { Airport, AirportClosure, SimulationResult } from "@/lib/sim/types";
 
-interface AirportClosurePopoverProps {
+/** Props accepted by `AirportClosurePopover`. */
+export interface AirportClosurePopoverProps {
   airport: Airport;
   existingClosure?: AirportClosure;
   simulation: SimulationResult;
@@ -22,44 +33,41 @@ const DURATION_PRESETS = [
   { label: "120m", mins: 120 },
 ];
 
+/**
+ * Renders the airport weather closure dialog anchored over the radar map.
+ */
 export function AirportClosurePopover({
-  airport,
-  existingClosure,
-  simulation,
-  onSaveClosure,
-  onRemoveClosure,
-  onClose,
+  airport, existingClosure, simulation, onSaveClosure, onRemoveClosure, onClose,
 }: AirportClosurePopoverProps) {
-  const [startStr, setStartStr] = useState(
-    existingClosure ? formatHHMM(existingClosure.startMin) : "08:00"
-  );
-  const [endStr, setEndStr] = useState(
-    existingClosure ? formatHHMM(existingClosure.endMin) : "09:30"
-  );
+  const [startStr, setStartStr] = useState(existingClosure ? formatHHMM(existingClosure.startMin) : "08:00");
+  const [endStr, setEndStr] = useState(existingClosure ? formatHHMM(existingClosure.endMin) : "09:30");
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
 
   const touchingFlights = simulation.flights.filter(
     (f) => f.origin === airport.id || f.destination === airport.id
   );
-  const disruptedTouching = touchingFlights.filter(
-    (f) => f.status !== "ON_TIME"
-  ).length;
+  const disruptedTouching = touchingFlights.filter((f) => f.status !== "ON_TIME").length;
 
   const parsedStart = parseHHMM(startStr);
   const parsedEnd = parseHHMM(endStr);
   const sliderDurationMin =
-    !Number.isNaN(parsedStart) &&
-    !Number.isNaN(parsedEnd) &&
-    parsedEnd > parsedStart
+    !Number.isNaN(parsedStart) && !Number.isNaN(parsedEnd) && parsedEnd > parsedStart
       ? Math.max(15, Math.min(240, parsedEnd - parsedStart))
       : 90;
 
   function applyDuration(mins: number) {
     const baseStart = Number.isNaN(parsedStart) ? 480 : parsedStart;
-    const clampedStart = Math.max(300, Math.min(1365, baseStart));
-    const endMin = Math.min(1380, clampedStart + mins);
+    const clampedStart = Math.max(CLOSURE_MIN, Math.min(CLOSURE_MAX - 15, baseStart));
     setStartStr(formatHHMM(clampedStart));
-    setEndStr(formatHHMM(endMin));
+    setEndStr(formatHHMM(Math.min(CLOSURE_MAX, clampedStart + mins)));
     setError(null);
   }
 
@@ -68,15 +76,10 @@ export function AirportClosurePopover({
     const startMin = parseHHMM(startStr);
     const endMin = parseHHMM(endStr);
     if (
-      Number.isNaN(startMin) ||
-      Number.isNaN(endMin) ||
-      startMin < 300 ||
-      endMin > 1380 ||
-      endMin <= startMin
+      Number.isNaN(startMin) || Number.isNaN(endMin) ||
+      startMin < CLOSURE_MIN || endMin > CLOSURE_MAX || endMin <= startMin
     ) {
-      setError(
-        "Closure must stay between 05:00 and 23:00 IST with reopen after start."
-      );
+      setError("Closure must stay between 05:00 and 23:00 IST with reopen after start.");
       return;
     }
     onSaveClosure({
@@ -98,22 +101,17 @@ export function AirportClosurePopover({
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-1.5">
-            <span className="font-mono text-sm font-bold text-[#1D4ED8]">
-              {airport.id}
-            </span>
+            <span className="font-mono text-sm font-bold text-[#1D4ED8]">{airport.id}</span>
             <span className="rounded-sm border border-[#E6EBF2] bg-[#F8FAFC] px-1.5 py-0.5 font-mono text-[10px] text-[#475569]">
               {airport.tier.replace("_", " ")}
             </span>
           </div>
           <p className="mt-0.5 text-xs text-[#475569]">
             {airport.city} · Cap {airport.capacity_per_hour}/hr ·{" "}
-            <span className="font-mono font-semibold text-[#0F172A]">
-              {touchingFlights.length}
-            </span>{" "}
+            <span className="font-mono font-semibold text-[#0F172A]">{touchingFlights.length}</span>{" "}
             flights ({disruptedTouching} impacted)
           </p>
         </div>
-
         <button
           type="button"
           onClick={onClose}
@@ -127,59 +125,35 @@ export function AirportClosurePopover({
       <form onSubmit={handleApply} className="mt-3 space-y-3">
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label
-              htmlFor="closure-start"
-              className="block text-[11px] font-medium text-[#475569]"
-            >
-              Close From (IST)
-            </label>
+            <label htmlFor="closure-start" className="block text-[11px] font-medium text-[#475569]">Close From (IST)</label>
             <input
               id="closure-start"
               type="time"
               min="05:00"
               max="22:45"
               value={startStr}
-              onChange={(e) => {
-                setStartStr(e.target.value);
-                setError(null);
-              }}
+              onChange={(e) => { setStartStr(e.target.value); setError(null); }}
               className="mt-1 h-8 w-full rounded-md border border-[#CBD5E1] bg-[#FBFCFD] px-2 font-mono text-xs text-[#0F172A] focus-visible:border-[#2B79FB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
             />
           </div>
           <div>
-            <label
-              htmlFor="closure-end"
-              className="block text-[11px] font-medium text-[#475569]"
-            >
-              Reopen At (IST)
-            </label>
+            <label htmlFor="closure-end" className="block text-[11px] font-medium text-[#475569]">Reopen At (IST)</label>
             <input
               id="closure-end"
               type="time"
               min="05:15"
               max="23:00"
               value={endStr}
-              onChange={(e) => {
-                setEndStr(e.target.value);
-                setError(null);
-              }}
+              onChange={(e) => { setEndStr(e.target.value); setError(null); }}
               className="mt-1 h-8 w-full rounded-md border border-[#CBD5E1] bg-[#FBFCFD] px-2 font-mono text-xs text-[#0F172A] focus-visible:border-[#2B79FB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
             />
           </div>
         </div>
 
-        {/* Live Storm Duration Slider (15-240m, step 5m) */}
         <div>
           <div className="flex items-center justify-between text-[11px]">
-            <label
-              htmlFor="storm-duration-slider"
-              className="font-medium text-[#475569]"
-            >
-              Storm duration
-            </label>
-            <span className="font-mono font-semibold tabular-nums text-[#0F172A]">
-              {sliderDurationMin}m
-            </span>
+            <label htmlFor="storm-duration-slider" className="font-medium text-[#475569]">Storm duration</label>
+            <span className="font-mono font-semibold tabular-nums text-[#0F172A]">{sliderDurationMin}m</span>
           </div>
           <input
             id="storm-duration-slider"
@@ -200,9 +174,7 @@ export function AirportClosurePopover({
         </div>
 
         <div>
-          <span className="block text-[11px] font-medium text-[#475569]">
-            Quick duration
-          </span>
+          <span className="block text-[11px] font-medium text-[#475569]">Quick duration</span>
           <div className="mt-1.5 flex flex-wrap gap-1">
             {DURATION_PRESETS.map((p) => (
               <button
@@ -221,11 +193,7 @@ export function AirportClosurePopover({
           </div>
         </div>
 
-        {error && (
-          <p className="text-xs font-medium text-[#B91C1C]" role="alert">
-            {error}
-          </p>
-        )}
+        {error && <p className="text-xs font-medium text-[#B91C1C]" role="alert">{error}</p>}
 
         <div className="flex items-center gap-2 pt-1">
           <button
@@ -235,14 +203,10 @@ export function AirportClosurePopover({
             <CloudLightning className="h-3.5 w-3.5" aria-hidden="true" />
             {existingClosure ? "Update Closure" : "Close Airport"}
           </button>
-
           {existingClosure && (
             <button
               type="button"
-              onClick={() => {
-                onRemoveClosure(airport.id);
-                onClose();
-              }}
+              onClick={() => { onRemoveClosure(airport.id); onClose(); }}
               aria-label={`Reopen ${airport.id}`}
               className="flex h-8 cursor-pointer items-center justify-center rounded-md border border-[#E6EBF2] bg-[#FBFCFD] px-2.5 text-xs font-medium text-[#475569] hover:bg-[#FEE2E2] hover:text-[#B91C1C] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2B79FB]"
             >
